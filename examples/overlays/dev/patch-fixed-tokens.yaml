@@ -1,0 +1,14 @@
+---
+# DEV ONLY — Splice apps authenticate to the participant with static HS256
+# tokens (signed with the disableAuth shared secret) instead of OAuth
+# client-credentials. Pairs with patch-participant-dev-auth.yaml.
+# (The name/kind here are placeholders; kustomization.yaml's patch targets
+# apply this same patch to splice-scan, splice-sv and splice-validator.)
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: placeholder
+spec:
+  values:
+    cluster:
+      fixedTokens: true

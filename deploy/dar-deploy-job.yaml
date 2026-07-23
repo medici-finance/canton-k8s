@@ -1,0 +1,120 @@
+---
+# One-shot Job that uploads a DAR (split across dar-part{1..3} ConfigMaps)
+# to a Canton participant's JSON API and verifies the result on-ledger.
+#
+# ── JOB-NAME VERSIONING RULE (read this before editing anything) ──────────
+# A Kubernetes Job's spec.template is IMMUTABLE. Flux cannot update a
+# completed (or failed) Job in place — it will either error or silently keep
+# the old one. The Job name therefore carries a version suffix
+# (${DAR_DEPLOY_JOB_VERSION}); bump it whenever:
+#   * the Job spec, env, initContainers, or mounted scripts change, or
+#   * the DAR ConfigMaps were regenerated (new DAR_VERSION).
+# A DAR_VERSION bump alone deploys NOTHING: the completed old Job is never
+# re-run, and even if it were, it uploads whatever the ConfigMaps hold.
+# Ship order: build DAR → regenerate dar-part ConfigMaps
+# (scripts/gen-dar-configmaps.sh) → bump DAR_VERSION + DAR_DEPLOY_JOB_VERSION
+# → push.
+#
+# ── VERIFY ON-CLUSTER, NOT JOB EXIT ───────────────────────────────────────
+# A zero exit code is NOT proof the new package is live: re-uploading a stale
+# DAR is accepted by Canton as a no-op. The script prints an unmissable
+# classification — check the log:
+#   kubectl logs -n <ns> job/dar-deploy-<ver>   # expect: RESULT: UPLOADED
+# "RESULT: ALREADY-CURRENT" means the ledger already had this exact package
+# (fine on a re-run, a red flag right after a version bump).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dar-deploy-${DAR_DEPLOY_JOB_VERSION}
+  namespace: ${ADMIN_NAMESPACE}
+  labels:
+    app: dar-deploy
+    component: dar-upload
+spec:
+  # Keep the Job + pods ~24h after finish so a failed attempt survives for
+  # diagnosis (short TTLs erase failure logs before anyone reads them).
+  ttlSecondsAfterFinished: 86400
+  # Bound the WHOLE Job (init-waits included). Without this, a broken
+  # bring-up leaves the pod Init:0/2 forever — green-looking and silent.
+  # A DeadlineExceeded Job is the INTENDED loud-failure mode: it pages via
+  # whatever watches Job failures instead of hanging. 900s default; raise via
+  # DAR_DEPLOY_DEADLINE_SECONDS for slow first installs (fresh Splice
+  # networks can take longer to converge).
+  activeDeadlineSeconds: ${DAR_DEPLOY_DEADLINE_SECONDS}
+  # Retry a couple of times: transient readiness races and slow first-listing
+  # responses are worth a retry since the upload is idempotent.
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: dar-deploy
+        component: dar-upload
+    spec:
+      # restartPolicy Never (NOT OnFailure) is REQUIRED for log retention:
+      # OnFailure + backoffLimit exceeded deletes the pod and its logs;
+      # Never keeps one pod per attempt.
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-canton
+          image: curlimages/curl:8.11.1
+          command: ["sh", "/opt/dar-deploy/wait-for-canton.sh"]
+          env:
+            - name: API
+              value: "${CANTON_API_URL}"
+          volumeMounts:
+            - name: scripts
+              mountPath: /opt/dar-deploy
+        # Optional but recommended on Splice: the deploy can race ahead of
+        # validator-app on a fresh install; participant-only readiness is not
+        # enough. Remove this initContainer if you do not run splice-validator.
+        - name: wait-for-validator
+          image: curlimages/curl:8.11.1
+          command: ["sh", "/opt/dar-deploy/wait-for-validator.sh"]
+          env:
+            - name: VALIDATOR_URL
+              value: "http://validator-app.${CANTON_NAMESPACE}.svc.cluster.local:5003"
+          volumeMounts:
+            - name: scripts
+              mountPath: /opt/dar-deploy
+      containers:
+        - name: deploy
+          image: ubuntu:24.04
+          command: ["bash", "/opt/dar-deploy/dar-deploy.sh"]
+          env:
+            - name: API
+              value: "${CANTON_API_URL}"
+            - name: PACKAGE_NAME
+              value: "${DAR_PACKAGE_NAME}"
+            - name: EXPECTED_DAR_VERSION
+              # Must match the DAR held by the dar-part ConfigMaps; the script
+              # FAILS on mismatch (fail closed — a stale ConfigMap otherwise
+              # no-ops silently while reporting success).
+              value: "${DAR_VERSION}"
+          volumeMounts:
+            - name: dar-part1
+              mountPath: /etc/dar/part1
+            - name: dar-part2
+              mountPath: /etc/dar/part2
+            - name: dar-part3
+              mountPath: /etc/dar/part3
+            - name: admin-token
+              mountPath: /etc/dar/admin
+            - name: scripts
+              mountPath: /opt/dar-deploy
+      volumes:
+        - name: dar-part1
+          configMap:
+            name: dar-part1
+        - name: dar-part2
+          configMap:
+            name: dar-part2
+        - name: dar-part3
+          configMap:
+            name: dar-part3
+        - name: admin-token
+          secret:
+            secretName: canton-admin-token
+        - name: scripts
+          configMap:
+            name: dar-deploy-scripts
+            defaultMode: 0755

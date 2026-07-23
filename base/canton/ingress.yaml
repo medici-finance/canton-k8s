@@ -1,0 +1,90 @@
+---
+# Keycloak — ${KEYCLOAK_HOST}
+# TLS is served from the shared wildcard cert (${TLS_SECRET_NAME}, see
+# certificate.yaml). No cert-manager.io/cluster-issuer annotation here —
+# we do NOT want ingress-shim auto-creating a per-host Certificate
+# (see the rate-limit note in certificate.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak-api
+  namespace: ${CANTON_NAMESPACE}
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: ${KEYCLOAK_HOST}
+    external-dns.alpha.kubernetes.io/target: ${EXTERNAL_DNS_TARGET}
+    traefik.ingress.kubernetes.io/router.middlewares: ${CANTON_NAMESPACE}-cors-headers@kubernetescrd
+spec:
+  ingressClassName: ${INGRESS_CLASS}
+  tls:
+    - hosts:
+        - ${KEYCLOAK_HOST}
+      secretName: ${TLS_SECRET_NAME}
+  rules:
+    - host: ${KEYCLOAK_HOST}
+      http:
+        paths:
+          - pathType: Prefix
+            path: /
+            backend:
+              service:
+                name: keycloak
+                port:
+                  number: 8080
+---
+# Canton Participant JSON API — ${CANTON_API_HOST}
+# TLS served from the shared wildcard cert (see certificate.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: canton-api
+  namespace: ${CANTON_NAMESPACE}
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: ${CANTON_API_HOST}
+    external-dns.alpha.kubernetes.io/target: ${EXTERNAL_DNS_TARGET}
+    traefik.ingress.kubernetes.io/router.middlewares: ${CANTON_NAMESPACE}-cors-headers@kubernetescrd
+spec:
+  ingressClassName: ${INGRESS_CLASS}
+  tls:
+    - hosts:
+        - ${CANTON_API_HOST}
+      secretName: ${TLS_SECRET_NAME}
+  rules:
+    - host: ${CANTON_API_HOST}
+      http:
+        paths:
+          - pathType: Prefix
+            path: /
+            backend:
+              service:
+                name: participant
+                port:
+                  number: 7575
+---
+# Validator Admin API — ${VALIDATOR_HOST}
+# TLS served from the shared wildcard cert (see certificate.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: validator-api
+  namespace: ${CANTON_NAMESPACE}
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: ${VALIDATOR_HOST}
+    external-dns.alpha.kubernetes.io/target: ${EXTERNAL_DNS_TARGET}
+    traefik.ingress.kubernetes.io/router.middlewares: ${CANTON_NAMESPACE}-cors-headers@kubernetescrd
+spec:
+  ingressClassName: ${INGRESS_CLASS}
+  tls:
+    - hosts:
+        - ${VALIDATOR_HOST}
+      secretName: ${TLS_SECRET_NAME}
+  rules:
+    - host: ${VALIDATOR_HOST}
+      http:
+        paths:
+          - pathType: Prefix
+            path: /
+            backend:
+              service:
+                name: validator-app
+                port:
+                  number: 5003

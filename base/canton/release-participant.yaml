@@ -1,0 +1,62 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: splice-participant
+  namespace: ${CANTON_NAMESPACE}
+spec:
+  interval: 15m
+  releaseName: participant
+  targetNamespace: ${CANTON_NAMESPACE}
+  chart:
+    spec:
+      chart: splice-participant
+      version: "${SPLICE_VERSION}"
+      sourceRef:
+        kind: HelmRepository
+        name: decentralized-canton-sync
+        namespace: ${CANTON_NAMESPACE}
+  dependsOn:
+    - name: splice-postgres
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # The base is RS256-only (secure default): the participant validates
+    # bearer tokens against the IdP's JWKS. The permissive dev model
+    # (disableAuth: true + static HS256 tokens) is an OVERLAY concern —
+    # see examples/overlays/dev/patch-participant-dev-auth.yaml.
+    persistence:
+      host: "postgres.${CANTON_NAMESPACE}.svc.cluster.local"
+      schema: "participant"
+      databaseName: "participant"
+    auth:
+      targetAudience: "${CANTON_AUDIENCE}"
+      # ISSUER/JWKS SPLIT — the single most important auth rule in this base:
+      #   * Tokens are MINTED against the PUBLIC IdP URL; their `iss` claim
+      #     must match the issuer the participant is configured with.
+      #   * The JWKS is FETCHED over IN-CLUSTER HTTP. The participant JVM
+      #     validates TLS on this fetch; if the public ingress ever serves an
+      #     untrusted certificate (rate-limited Let's Encrypt, self-signed
+      #     fallback — see certificate.yaml) the handshake fails and EVERY
+      #     RS256 token is rejected ("JwtException: null"). The JWKS contains
+      #     only public keys and the hop stays inside the cluster, so nothing
+      #     secret ever crosses this URL. The token `iss` is unchanged (still
+      #     the public https URL) — only the key-fetch transport differs.
+      jwksUrl: "http://keycloak.${CANTON_NAMESPACE}.svc.cluster.local:8080/auth/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
+    participantAdminUserNameFrom:
+      secretKeyRef:
+        name: participant-ledger-api-user
+        key: ledger-api-user
+    enableHealthProbes: true
+    # Connect to the Super Validator domain. The participant must be connected
+    # to a synchronizer before any contract can be created. The sv-app manages
+    # topology (sequencing parameters, party-to-domain mappings) via the
+    # participant's admin API. Without this config the participant never calls
+    # ConnectToSynchronizer after a DB wipe.
+    sv:
+      url: "http://sv-app.${CANTON_NAMESPACE}.svc.cluster.local:5014"

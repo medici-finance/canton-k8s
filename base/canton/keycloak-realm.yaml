@@ -1,0 +1,226 @@
+---
+# Minimal bootstrap Keycloak realm for a Canton/Splice deployment.
+#
+# Defines only what the Splice components and a generic frontend need:
+#   clients:
+#     app-user-validator    — the validator's service client (participant admin
+#                             user; its token sub becomes the ledger-api user)
+#     app-user-sv           — sv-app + scan service client
+#     validator-app-backend — validator backend service client
+#     ${FRONTEND_CLIENT_ID} — public browser client for your frontend
+#     admin-cli             — Keycloak admin CLI (password grant)
+#   client scopes:
+#     basic                  (sub mapper)
+#     daml_ledger_api        (marker scope Canton tokens carry)
+#     audience_canton_network (aud=${CANTON_AUDIENCE} mapper)
+#   users:
+#     app-user, admin        (bootstrap; passwords from keycloak-credentials)
+#
+# TWO SUBSTITUTION LAYERS — read before editing:
+#   1. ${CANTON_NAMESPACE}-style vars are replaced by Flux at apply time
+#      (postBuild.substituteFrom). Undefined vars are left untouched.
+#   2. ${APP_USER_VALIDATOR_CLIENT_SECRET}-style placeholders are replaced by
+#      envsubst in the keycloak Deployment's realm-import init container at
+#      POD START, from the keycloak-credentials Secret. They MUST NOT appear
+#      in your Flux env ConfigMap, or Flux would substitute them first.
+#
+# Add your own application/service clients in your consuming repo by
+# REPLACING this ConfigMap via a kustomize patch or by shipping your own
+# keycloak-realm.yaml — remember to extend the realm-import init container's
+# env + export list (keycloak.yaml) for every new secret placeholder.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm
+  namespace: ${CANTON_NAMESPACE}
+data:
+  realm.json: |
+    {
+      "realm": "${KEYCLOAK_REALM}",
+      "enabled": true,
+      "displayName": "${KEYCLOAK_REALM}",
+      "accessTokenLifespan": 300,
+      "ssoSessionIdleTimeout": 1800,
+      "ssoSessionMaxLifespan": 36000,
+      "clients": [
+        {
+          "clientId": "app-user-validator",
+          "name": "App User Validator",
+          "secret": "${APP_USER_VALIDATOR_CLIENT_SECRET}",
+          "serviceAccountsEnabled": true,
+          "authorizationServicesEnabled": false,
+          "publicClient": false,
+          "protocol": "openid-connect",
+          "directAccessGrantsEnabled": false,
+          "standardFlowEnabled": false,
+          "defaultClientScopes": [
+            "service_account",
+            "web-origins",
+            "audience_canton_network",
+            "acr",
+            "roles",
+            "profile",
+            "basic",
+            "email",
+            "daml_ledger_api"
+          ]
+        },
+        {
+          "clientId": "app-user-sv",
+          "name": "App User SV (sv-app + scan)",
+          "secret": "${APP_USER_SV_CLIENT_SECRET}",
+          "serviceAccountsEnabled": true,
+          "authorizationServicesEnabled": false,
+          "publicClient": false,
+          "protocol": "openid-connect",
+          "directAccessGrantsEnabled": false,
+          "standardFlowEnabled": false,
+          "defaultClientScopes": [
+            "service_account",
+            "web-origins",
+            "audience_canton_network",
+            "acr",
+            "roles",
+            "profile",
+            "basic",
+            "email",
+            "daml_ledger_api"
+          ]
+        },
+        {
+          "clientId": "validator-app-backend",
+          "name": "Validator App Backend",
+          "secret": "${VALIDATOR_APP_BACKEND_CLIENT_SECRET}",
+          "serviceAccountsEnabled": true,
+          "authorizationServicesEnabled": false,
+          "publicClient": false,
+          "protocol": "openid-connect",
+          "directAccessGrantsEnabled": false,
+          "standardFlowEnabled": false,
+          "defaultClientScopes": [
+            "service_account",
+            "web-origins",
+            "audience_canton_network",
+            "acr",
+            "roles",
+            "profile",
+            "basic",
+            "email",
+            "daml_ledger_api"
+          ]
+        },
+        {
+          "clientId": "${FRONTEND_CLIENT_ID}",
+          "name": "Frontend",
+          "publicClient": true,
+          "protocol": "openid-connect",
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": true,
+          "redirectUris": [
+            "${FRONTEND_URL}/*"
+          ],
+          "webOrigins": ["${FRONTEND_URL}"],
+          "defaultClientScopes": [
+            "openid",
+            "web-origins",
+            "audience_canton_network",
+            "acr",
+            "roles",
+            "profile",
+            "basic",
+            "email",
+            "daml_ledger_api"
+          ],
+          "optionalClientScopes": []
+        },
+        {
+          "clientId": "admin-cli",
+          "publicClient": true,
+          "protocol": "openid-connect",
+          "directAccessGrantsEnabled": true
+        }
+      ],
+      "clientScopes": [
+        {
+          "name": "basic",
+          "protocol": "openid-connect",
+          "attributes": {
+            "display.on.consent.screen": "true",
+            "include.in.token.scope": "true"
+          },
+          "protocolMappers": [
+            {
+              "name": "sub",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-sub-mapper",
+              "config": {
+                "access.token.claim": "true",
+                "id.token.claim": "true",
+                "userinfo.token.claim": "true"
+              }
+            }
+          ]
+        },
+        {
+          "name": "daml_ledger_api",
+          "protocol": "openid-connect",
+          "attributes": {
+            "display.on.consent.screen": "true",
+            "include.in.token.scope": "true"
+          }
+        },
+        {
+          "name": "audience_canton_network",
+          "protocol": "openid-connect",
+          "attributes": {
+            "display.on.consent.screen": "true",
+            "include.in.token.scope": "true"
+          },
+          "protocolMappers": [
+            {
+              "name": "audience-canton-network",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "config": {
+                "included.client.audience": "",
+                "included.custom.audience": "${CANTON_AUDIENCE}",
+                "access.token.claim": "true",
+                "id.token.claim": "true"
+              }
+            }
+          ]
+        }
+      ],
+      "users": [
+        {
+          "username": "app-user",
+          "email": "app-user@app-user.localhost",
+          "firstName": "app",
+          "lastName": "user",
+          "enabled": true,
+          "emailVerified": true,
+          "credentials": [
+            {
+              "type": "password",
+              "value": "${APP_USER_PASSWORD}"
+            }
+          ],
+          "realmRoles": ["default-roles-${KEYCLOAK_REALM_LOWER}"]
+        },
+        {
+          "username": "admin",
+          "email": "admin@admin.localhost",
+          "firstName": "Admin",
+          "lastName": "User",
+          "enabled": true,
+          "emailVerified": true,
+          "credentials": [
+            {
+              "type": "password",
+              "value": "${ADMIN_PASSWORD}"
+            }
+          ],
+          "realmRoles": ["admin"]
+        }
+      ]
+    }

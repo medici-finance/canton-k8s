@@ -1,0 +1,220 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: ${CANTON_NAMESPACE}
+  labels:
+    app: keycloak
+spec:
+  ports:
+    - port: 8080
+      name: http
+  selector:
+    app: keycloak
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: ${CANTON_NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+      annotations:
+        # Bump ${REALM_CHECKSUM} (in your env ConfigMap) whenever the realm
+        # ConfigMap changes AND you need the change re-imported. With
+        # KEYCLOAK_DB_RESET=enabled (dev) the bump triggers a DB drop + fresh
+        # realm import on the next rollout; with KEYCLOAK_DB_RESET=disabled
+        # (prod) an existing realm is NOT re-imported — apply realm changes
+        # through the Keycloak admin API instead.
+        realm-checksum: "${REALM_CHECKSUM}"
+    spec:
+      initContainers:
+        - name: db-init
+          image: postgres:14
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              export PGPASSWORD="${KC_INIT_PG_ADMIN_PASSWORD}"
+              echo "Waiting for postgres..."
+              until psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c "SELECT 1" > /dev/null 2>&1; do
+                echo "  still waiting..."
+                sleep 2
+              done
+              echo "Postgres is ready."
+
+              # Create role if not exists
+              psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -tc \
+                "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname='${KC_INIT_DB_USER}'" 2>/dev/null | grep -q 1 || \
+              psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c \
+                "CREATE ROLE \"${KC_INIT_DB_USER}\" WITH LOGIN PASSWORD '${KC_INIT_DB_PASSWORD}'"
+
+              if [ "${KC_INIT_RESET_DB}" = "enabled" ]; then
+                # DEV MODE ONLY: drop the Keycloak database if it exists —
+                # forces a fresh realm import on every restart so realm
+                # ConfigMap changes (redirectUris, mappers, clients) take
+                # effect. WITH (FORCE) kills any stale connections.
+                # This DESTROYS all Keycloak state (users, sessions) — never
+                # enable it on an environment with real users.
+                echo "KC_INIT_RESET_DB=enabled — recreating Keycloak database..."
+                psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c \
+                  "DROP DATABASE IF EXISTS keycloakdb WITH (FORCE)"
+              fi
+
+              # Create database if not exists, owned by the keycloak user
+              psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -tc \
+                "SELECT 1 FROM pg_catalog.pg_database WHERE datname='keycloakdb'" 2>/dev/null | grep -q 1 || \
+              psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c \
+                "CREATE DATABASE keycloakdb OWNER \"${KC_INIT_DB_USER}\""
+
+              echo "Keycloak database and user are ready."
+          env:
+            - name: KC_INIT_PG_HOST
+              value: postgres.${CANTON_NAMESPACE}.svc.cluster.local
+            - name: KC_INIT_RESET_DB
+              value: "${KEYCLOAK_DB_RESET}"
+            - name: KC_INIT_PG_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: postgresPassword
+            - name: KC_INIT_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: username
+            - name: KC_INIT_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: password
+        # Template the realm import file: envsubst injects client secrets and
+        # bootstrap-user passwords from the keycloak-credentials Secret into
+        # the realm JSON. Only the variables exported below are substituted —
+        # extend BOTH the export list and the env list when your (consumer)
+        # realm overlay adds clients.
+        - name: realm-import
+          image: alpine:latest
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              apk add --no-cache gettext > /dev/null 2>&1
+              echo "Templating realm.json with Secret values..."
+              export APP_USER_VALIDATOR_CLIENT_SECRET APP_USER_SV_CLIENT_SECRET APP_USER_PASSWORD ADMIN_PASSWORD VALIDATOR_APP_BACKEND_CLIENT_SECRET
+              envsubst < /etc/realm/realm.json > /opt/keycloak/data/import/realm.json
+              echo "Realm import file ready."
+          env:
+            - name: APP_USER_VALIDATOR_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-credentials
+                  key: app-user-validator-client-secret
+            - name: APP_USER_SV_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-credentials
+                  key: app-user-sv-client-secret
+            - name: APP_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-credentials
+                  key: app-user-password
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-credentials
+                  key: admin-realm-password
+            - name: VALIDATOR_APP_BACKEND_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-credentials
+                  key: validator-app-backend-client-secret
+          volumeMounts:
+            - name: realm-template
+              mountPath: /etc/realm
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.1.0
+          args: ["start-dev", "--import-realm"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-credentials
+                  key: admin-user
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-credentials
+                  key: admin-password
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL_HOST
+              value: postgres.${CANTON_NAMESPACE}.svc.cluster.local
+            - name: KC_DB_URL_PORT
+              value: "5432"
+            - name: KC_DB_URL_DATABASE
+              value: keycloakdb
+            - name: KC_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: username
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: password
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            # The PUBLIC issuer URL. Tokens minted here carry
+            # iss=https://${KEYCLOAK_HOST}/auth/realms/<realm> — this must
+            # match the issuer the participant's IdP config expects, while the
+            # participant fetches the JWKS over in-cluster HTTP (see
+            # release-participant.yaml).
+            - name: KC_HOSTNAME_URL
+              value: https://${KEYCLOAK_HOST}/auth
+            - name: KC_HOSTNAME_ADMIN_URL
+              value: https://${KEYCLOAK_HOST}/auth
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            - name: KC_HTTP_RELATIVE_PATH
+              value: /auth
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+      volumes:
+        - name: realm-template
+          configMap:
+            name: keycloak-realm
+        - name: realm-import
+          emptyDir: {}

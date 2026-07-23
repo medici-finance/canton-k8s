@@ -1,0 +1,36 @@
+---
+# Wildcard TLS certificate for the environment.
+#
+# WHY a wildcard (vs. per-host certificates):
+#   Letting cert-manager's ingress-shim auto-create one Certificate per ingress
+#   host means every cold-start rebuild re-requests all of them from
+#   Let's Encrypt, and the churn eventually trips LE's "5 certificates per
+#   exact set of identifiers / 168h" rate limit:
+#     429 rateLimited: too many certificates already issued for this exact set
+#     of identifiers — retry after ...
+#   With no valid certificate the ingress serves a self-signed
+#   `cert-manager.local` cert, which the Canton participant's JVM does not
+#   trust — so any JWKS fetch over the public HTTPS ingress fails
+#   (SSLHandshakeException → `JwtException: null`) and ALL RS256 tokens are
+#   rejected with HTTP 401. (See also the issuer/JWKS split note in
+#   release-participant.yaml — the base fetches JWKS in-cluster precisely so
+#   token validation never depends on this certificate.)
+#
+#   A single `*.${BASE_DOMAIN}` is ONE identifier set that covers every current
+#   and future host in the environment, issued once and reused.
+#
+# Wildcards REQUIRE a DNS-01 challenge; the referenced ClusterIssuer must have
+# a DNS-01 solver configured (e.g. Cloudflare, Route53).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ${TLS_SECRET_NAME}
+  namespace: ${CANTON_NAMESPACE}
+spec:
+  secretName: ${TLS_SECRET_NAME}
+  issuerRef:
+    name: ${CLUSTER_ISSUER}
+    kind: ClusterIssuer
+  commonName: "*.${BASE_DOMAIN}"
+  dnsNames:
+    - "*.${BASE_DOMAIN}"

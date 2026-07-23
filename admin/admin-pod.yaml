@@ -1,0 +1,120 @@
+---
+# canton-admin — persistent debug / diagnostic jump-box.
+#
+# A stable pod with curl/jq/kubectl and the admin token mounted, so the system
+# can be inspected without fighting crash-looping pods, short-lived init
+# containers, or cross-machine network limits. Read-only RBAC in its own
+# namespace — this pod may inspect, never mutate. (To also read participant
+# logs in the canton namespace, apply the dev overlay's debug-pod-rbac.yaml.)
+#
+# Usage (from a host with kubectl):
+#   kubectl exec -n <ns> deploy/canton-admin -- probe-canton.sh
+#   kubectl exec -n <ns> deploy/canton-admin -- verify-user.sh <sub>
+#   kubectl exec -n <ns> deploy/canton-admin -- mint-token.sh svc <client-id>
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: canton-admin
+  namespace: ${ADMIN_NAMESPACE}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: canton-admin-read
+  namespace: ${ADMIN_NAMESPACE}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "configmaps", "services", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps", "batch"]
+    resources: ["deployments", "replicasets", "statefulsets", "jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["helm.toolkit.fluxcd.io", "source.toolkit.fluxcd.io", "kustomize.toolkit.fluxcd.io"]
+    resources: ["helmreleases", "gitrepositories", "ocirepositories", "kustomizations"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: canton-admin-read
+  namespace: ${ADMIN_NAMESPACE}
+subjects:
+  - kind: ServiceAccount
+    name: canton-admin
+    namespace: ${ADMIN_NAMESPACE}
+roleRef:
+  kind: Role
+  name: canton-admin-read
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canton-admin
+  namespace: ${ADMIN_NAMESPACE}
+  labels:
+    app: canton-admin
+    component: debug
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: canton-admin
+  template:
+    metadata:
+      labels:
+        app: canton-admin
+        component: debug
+    spec:
+      serviceAccountName: canton-admin
+      containers:
+        - name: admin
+          image: ${ADMIN_IMAGE}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "canton-admin debug pod ready."
+              echo "  Canton API: $CANTON_URL | admin token: /etc/canton-admin/token"
+              echo "  scripts (in PATH): probe-canton.sh verify-user.sh mint-token.sh"
+              exec sleep infinity
+          env:
+            - name: CANTON_URL
+              value: "${CANTON_API_URL}"
+            - name: KEYCLOAK_URL
+              value: "${KEYCLOAK_PUBLIC_URL}"
+            - name: KC_REALM
+              value: "${KEYCLOAK_REALM}"
+            - name: KC_FRONTEND_CLIENT_ID
+              value: "${FRONTEND_CLIENT_ID}"
+            - name: TOKEN_FILE
+              value: "/etc/canton-admin/token"
+            - name: CREDS_DIR
+              value: "/etc/canton-admin/creds"
+            - name: PATH
+              value: "/opt/canton-admin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          volumeMounts:
+            - name: canton-token
+              mountPath: /etc/canton-admin/token
+              subPath: token
+              readOnly: true
+            - name: credentials
+              mountPath: /etc/canton-admin/creds
+              readOnly: true
+            - name: scripts
+              mountPath: /opt/canton-admin
+              readOnly: true
+          resources:
+            requests: {cpu: "50m", memory: "64Mi"}
+            limits: {cpu: "500m", memory: "512Mi"}
+      volumes:
+        - name: canton-token
+          secret:
+            secretName: canton-admin-token
+        - name: credentials
+          secret:
+            secretName: keycloak-credentials
+            optional: true
+        - name: scripts
+          configMap:
+            name: canton-admin-scripts
+            defaultMode: 0755

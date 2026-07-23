@@ -1,0 +1,32 @@
+# Canton Auth Diagnosis Skill — Example Configuration
+#
+# Copy this file to config.yaml, replace the placeholder values with your
+# deployment's actual endpoints, and reference the diagnosis flow at
+# diagnosis-flow.md. All probe commands in the flow use these variables.
+#
+# No value in this file references any specific dApp, package, party name,
+# or identity provider realm.
+
+participant_url: "https://canton.example.com"
+  # The Canton JSON API v2 base URL. Must be reachable from wherever you run
+  # the diagnosis probes (in-cluster, localhost tunnel, or bastion).
+
+idp_issuer: "https://idp.example.com/realms/app-users"
+  # The public issuer URL that appears in the `iss` claim of your RS256 tokens.
+  # Must match the participant's IdP config `issuer` field exactly — including
+  # the trailing path (e.g. `/realms/app-users`).
+
+jwks_url: "http://idp.namespace.svc.cluster.local:8080/realms/app-users/protocol/openid-connect/certs"
+  # The in-cluster HTTP URL for the JWKS endpoint. Must be http:// (not https://)
+  # because the participant JVM validates TLS on this fetch — using the internal
+  # URL eliminates the trust problem.
+
+package_name: "#my-package"
+  # Your DAML package identifier, as it appears in template IDs. Used in
+  # template-level queries (e.g. /v2/state/active-contracts).
+
+participant_log_command: "kubectl logs deploy/participant -c participant"
+  # How to access the participant log in your environment. Adapt to your
+  # deployment: kubectl, docker logs, journalctl, or a log-aggregation query.
+  # The diagnosis flow uses this as $CONFIG_PARTICIPANT_LOG_COMMAND with
+  # --since=1m appended for the masked-error unmask technique.

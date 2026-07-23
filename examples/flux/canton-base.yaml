@@ -1,0 +1,49 @@
+---
+# How a consuming (private) repo pulls this public base in via Flux.
+#
+# SUPPLY-CHAIN RULE: pin the GitRepository to a TAG or COMMIT SHA — never a
+# moving branch. This repo is a public source; a branch ref would let any
+# future commit (or a compromised one) flow straight into your cluster.
+# Review, then bump the pin deliberately.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: canton-splice-base
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://github.com/medici-finance/canton-k8s
+  ref:
+    # Pin by tag…
+    tag: v0.1.0
+    # …or, stricter, by commit:
+    # commit: 0123456789abcdef0123456789abcdef01234567
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: canton-dev
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: canton-splice-base
+  # Point at the base directly, or at YOUR overlay directory in your own repo
+  # (which references the base by path) if you keep overlays privately.
+  path: ./examples/overlays/dev
+  prune: true
+  wait: false
+  timeout: 5m
+  postBuild:
+    substituteFrom:
+      # Non-secret env scalars (namespace, hostnames, sizes) — a plain
+      # ConfigMap in YOUR repo. See examples/env-config.yaml.
+      - kind: ConfigMap
+        name: canton-env-config
+      # Anything sensitive you want substituted (none required by this base —
+      # all credential material is consumed as k8s Secrets by name, not
+      # substituted into manifests). Slot kept here to show the pattern.
+      - kind: Secret
+        name: canton-env-secrets
+        optional: true

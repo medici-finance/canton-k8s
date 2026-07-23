@@ -1,0 +1,89 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: splice-domain
+  namespace: ${CANTON_NAMESPACE}
+spec:
+  interval: 15m
+  releaseName: domain
+  targetNamespace: ${CANTON_NAMESPACE}
+  chart:
+    spec:
+      chart: splice-domain
+      version: "${SPLICE_VERSION}"
+      sourceRef:
+        kind: HelmRepository
+        name: decentralized-canton-sync
+        namespace: ${CANTON_NAMESPACE}
+  dependsOn:
+    - name: splice-postgres
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  # Chart workarounds (observed on the 0.6.x line, self-contained/founding-SV
+  # topology). Each patch below fixes a chart/image mismatch; re-test when
+  # bumping ${SPLICE_VERSION} and drop any that upstream has fixed.
+  #
+  # 1. The chart omits CANTON_DOMAIN_POSTGRES_PORT from the domain container
+  #    env, but the canton_domain image's app.conf requires it (non-optional
+  #    HOCON substitution) — the pod crash-loops with "Could not resolve
+  #    substitution to a value: ${CANTON_DOMAIN_POSTGRES_PORT}". The chart
+  #    feeds persistence.port only to the init containers' `psql -p`, never to
+  #    the main container env, and exposes no extraEnv hook. Inject post-render.
+  # 2. The image's default bootstrap script initialises the synchronizer at
+  #    startup (CANTON_DOMAIN_INITIALIZE defaults true), which fails with
+  #    "Node is not initialized" because the nodes run identity.type=manual
+  #    and expect the SV app to initialise them (same model as the Splice
+  #    quickstart: canton stays up, sv-app inits). Skip the bootstrap init so
+  #    the domain stays Ready; splice-sv (found-dso,
+  #    skip-synchronizer-initialization=false) does the init.
+  # 3. The chart's startup/liveness/readiness probes target the sequencer
+  #    public API (cd-pub-api, 5008), which only serves AFTER the SV app
+  #    initialises the node. Probing 5008 keeps the pod NotReady forever →
+  #    Helm install times out → scan/sv never start → the sequencer never gets
+  #    initialised. Probe the sequencer admin API (cd-adm-api, 5009) instead —
+  #    it serves before init, so the domain reaches Ready and unblocks scan/sv.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: domain
+            patch: |-
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: CANTON_DOMAIN_POSTGRES_PORT
+                  value: "5432"
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: CANTON_DOMAIN_INITIALIZE
+                  value: "false"
+              - op: replace
+                path: /spec/template/spec/containers/0/startupProbe/tcpSocket/port
+                value: cd-adm-api
+              - op: replace
+                path: /spec/template/spec/containers/0/livenessProbe/tcpSocket/port
+                value: cd-adm-api
+              - op: replace
+                path: /spec/template/spec/containers/0/readinessProbe/tcpSocket/port
+                value: cd-adm-api
+  values:
+    mediator:
+      persistence:
+        host: "postgres.${CANTON_NAMESPACE}.svc.cluster.local"
+        port: 5432
+        databaseName: "mediator"
+        secretName: "postgres-secrets"
+    sequencer:
+      persistence:
+        host: "postgres.${CANTON_NAMESPACE}.svc.cluster.local"
+        port: 5432
+        databaseName: "sequencer"
+        secretName: "postgres-secrets"

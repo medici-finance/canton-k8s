@@ -1,0 +1,27 @@
+---
+# Traefik CORS middleware — allows the frontend origin to call the Canton
+# JSON API, Keycloak, and Validator APIs cross-origin.
+# Applied to ingress routes via annotation:
+#   traefik.ingress.kubernetes.io/router.middlewares: ${CANTON_NAMESPACE}-cors-headers@kubernetescrd
+# (Traefik middleware references are <namespace>-<name>@kubernetescrd.)
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: cors-headers
+  namespace: ${CANTON_NAMESPACE}
+spec:
+  headers:
+    accessControlAllowOriginList:
+      - "${FRONTEND_URL}"
+    accessControlAllowMethods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+      - "OPTIONS"
+    accessControlAllowHeaders:
+      - "Authorization"
+      - "Content-Type"
+      - "X-Requested-With"
+    accessControlAllowCredentials: true
+    accessControlMaxAge: 3600

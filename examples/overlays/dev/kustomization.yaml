@@ -1,0 +1,41 @@
+---
+# Example DEV overlay.
+#
+# The base is RS256-only and secure by default. This overlay applies the
+# permissive development model on top:
+#   * participant: disableAuth=true (static HS256 tokens, secret "unsafe")
+#     PLUS re-appending the jwt-jwks validator so real RS256 tokens keep
+#     working next to the HS256 one (see patch-participant-dev-auth.yaml —
+#     the env var NAME matters, read the comment before renaming).
+#   * scan / sv / validator: cluster.fixedTokens=true (the Splice apps talk
+#     to the participant with static tokens instead of client-credentials).
+#   * debug RBAC: lets an admin/debug pod in ${ADMIN_NAMESPACE} read pod logs
+#     in the canton namespace.
+#
+# In your dev env ConfigMap, also set:
+#   KEYCLOAK_DB_RESET: "enabled"   # fresh realm import on every keycloak rollout
+#   SPLICE_IS_DEV_NET: "true"
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../../base/canton
+  - debug-pod-rbac.yaml
+
+patches:
+  - path: patch-participant-dev-auth.yaml
+    target:
+      kind: HelmRelease
+      name: splice-participant
+  - path: patch-fixed-tokens.yaml
+    target:
+      kind: HelmRelease
+      name: splice-scan
+  - path: patch-fixed-tokens.yaml
+    target:
+      kind: HelmRelease
+      name: splice-sv
+  - path: patch-fixed-tokens.yaml
+    target:
+      kind: HelmRelease
+      name: splice-validator
