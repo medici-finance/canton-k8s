@@ -1,0 +1,64 @@
+---
+# Example per-environment ConfigMap consumed via Flux postBuild.substituteFrom.
+#
+# This lives in YOUR (private) repo, one per environment, next to the Flux
+# Kustomization that points at this repo (see examples/flux/). Every value
+# below is required by base/canton unless marked optional. deploy/ and admin/
+# add a few more (see their kustomization.yaml headers).
+#
+# CI in this repo substitutes exactly these example values into the base to
+# validate that the substituted output is schema-clean.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: canton-env-config
+  namespace: flux-system
+data:
+  # ── Namespaces ────────────────────────────────────────────────────────────
+  CANTON_NAMESPACE: "canton-dev"          # namespace for all canton/splice components
+  ADMIN_NAMESPACE: "canton-tools-dev"     # namespace for the admin/debug pod + deploy Job
+
+  # ── Public hostnames (no nested substitution — spell each out fully) ─────
+  BASE_DOMAIN: "dev.example.com"          # wildcard cert covers *.dev.example.com
+  KEYCLOAK_HOST: "keycloak.dev.example.com"
+  CANTON_API_HOST: "canton.dev.example.com"
+  VALIDATOR_HOST: "validator.dev.example.com"
+  FRONTEND_URL: "https://app.dev.example.com"
+
+  # ── Ingress / TLS ─────────────────────────────────────────────────────────
+  INGRESS_CLASS: "traefik"
+  TLS_SECRET_NAME: "dev-wildcard-tls"
+  CLUSTER_ISSUER: "letsencrypt-production" # must have a DNS-01 solver (wildcard)
+  EXTERNAL_DNS_TARGET: "ingress.example.com"
+
+  # ── Identity ──────────────────────────────────────────────────────────────
+  KEYCLOAK_REALM: "AppUser"
+  KEYCLOAK_REALM_LOWER: "appuser"          # Keycloak's default-roles-<lowercase realm>
+  FRONTEND_CLIENT_ID: "app-web"            # public OIDC client for the frontend
+  CANTON_AUDIENCE: "https://canton.network.global"
+  PARTICIPANT_ADMIN_USER: "app-user-validator"
+  VALIDATOR_WALLET_USER: "wallet-admin"
+
+  # ── Keycloak lifecycle ───────────────────────────────────────────────────
+  KEYCLOAK_DB_RESET: "enabled"             # dev: fresh realm import each rollout.
+                                           # MUST be "disabled" anywhere with real
+                                           # users. (Deliberately not true/false —
+                                           # a substituted bare boolean would break
+                                           # the env-var string typing.)
+  REALM_CHECKSUM: "v1"                     # bump to force a keycloak rollout on realm changes
+
+  # ── Splice ────────────────────────────────────────────────────────────────
+  SPLICE_VERSION: "0.6.11"                 # keep identical across ALL splice-* charts
+  SPLICE_IS_DEV_NET: "true"
+  POSTGRES_VOLUME_SIZE: "20Gi"
+  STORAGE_CLASS: "standard"
+
+  # ── deploy/ (DAR deploy Job) — only if you use deploy/ ───────────────────
+  CANTON_API_URL: "http://participant.canton-dev.svc.cluster.local:7575"
+  DAR_PACKAGE_NAME: "my-package"           # DAML package name (daml.yaml `name:`)
+  DAR_VERSION: "0.1.0"                     # must match the DAR in the dar-part ConfigMaps
+  DAR_DEPLOY_JOB_VERSION: "v1"             # bump on EVERY Job spec/script/DAR change
+
+  # ── admin/ (debug pod) — only if you use admin/ ──────────────────────────
+  ADMIN_IMAGE: "alpine/k8s:1.31.1"         # needs bash, curl, jq, kubectl
+  KEYCLOAK_PUBLIC_URL: "https://keycloak.dev.example.com/auth"

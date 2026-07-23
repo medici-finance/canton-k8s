@@ -1,0 +1,38 @@
+---
+# DEV ONLY — permissive participant auth.
+#
+# disableAuth: true makes the chart configure ONE auth service:
+# unsafe-jwt-hmac-256 (HS256, shared secret "unsafe"). That is what the
+# Splice components' static fixedTokens are signed with.
+#
+# The chart's disableAuth injects ADDITIONAL_CONFIG_DISABLE_AUTH containing a
+# plain `auth-services = [hs256]` ASSIGNMENT, which REPLACES the jwt-jwks
+# entry from app.conf. The append below adds jwt-jwks back so frontends and
+# services can still authenticate with real RS256 tokens from the IdP.
+#
+# NAME ORDERING CONSTRAINT (do not rename): the Splice image entrypoint
+# concatenates every ADDITIONAL_CONFIG_* env var in bash ${!ADDITIONAL_CONFIG@}
+# order, which is ALPHABETICAL. This var must sort AFTER "DISABLE_AUTH" so the
+# `+=` append runs after the chart's assignment. A name sorting before D
+# (e.g. ADDITIONAL_CONFIG_AUTH_JWT_JWKS) gets silently wiped by the assignment
+# and the participant runs with ONLY the HS256 validator — every RS256 token
+# then 401s ("Algorithm doesn't match"), masked by the HS256 god token.
+#
+# HOCON NOTE: `+=` appends its operand as ONE list element — the operand must
+# be the bare object, NOT wrapped in [ ] (that appends a nested list:
+# "Expected type OBJECT. Found LIST").
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: splice-participant
+spec:
+  values:
+    disableAuth: true
+    additionalEnvVars:
+      - name: ADDITIONAL_CONFIG_JWT_JWKS
+        value: |-
+          canton.participants.participant.ledger-api.auth-services += {
+            type = jwt-jwks
+            url = "http://keycloak.${CANTON_NAMESPACE}.svc.cluster.local:8080/auth/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
+            target-audience = "${CANTON_AUDIENCE}"
+          }

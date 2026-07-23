@@ -1,0 +1,13 @@
+---
+# Name of the participant's admin ledger-api user. The splice-participant
+# chart reads this via participantAdminUserNameFrom. The value is a user NAME,
+# not a credential, so it can live in the public base; it is a Secret only
+# because the chart expects a secretKeyRef.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: participant-ledger-api-user
+  namespace: ${CANTON_NAMESPACE}
+type: Opaque
+stringData:
+  ledger-api-user: "${PARTICIPANT_ADMIN_USER}"

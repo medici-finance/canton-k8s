@@ -1,0 +1,39 @@
+---
+# Parametrized Canton/Splice base.
+#
+# Every `${VAR}` placeholder is substituted by Flux at apply time via
+# `postBuild.substituteFrom` (see examples/flux/). `kustomize build` of this
+# directory alone produces manifests with the placeholders still in place —
+# that is intentional; substitution is the consumer's job.
+#
+# SECRETS ARE NOT PART OF THIS BASE. The workloads reference the following
+# Secrets by name; the consuming (private) repo must create them in
+# ${CANTON_NAMESPACE} — e.g. as SOPS-encrypted manifests or via an external
+# secrets operator. See docs/usage.md § "Required secrets" for the key list:
+#   - postgres-secrets
+#   - keycloak-credentials
+#   - splice-app-validator-ledger-api-auth
+#   - splice-app-sv-ledger-api-auth
+#   - canton-admin-token            (only if you use deploy/ or admin/)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ${CANTON_NAMESPACE}
+
+resources:
+  - namespace.yaml
+  - helm-repository.yaml
+  - participant-admin-user.yaml
+  - splice-app-sv-ui-auth.yaml
+  - splice-app-wallet-ui-auth.yaml
+  - splice-app-cns-ui-auth.yaml
+  - release-postgres.yaml
+  - release-domain.yaml
+  - release-participant.yaml
+  - release-scan.yaml
+  - release-sv.yaml
+  - release-validator.yaml
+  - keycloak.yaml
+  - keycloak-realm.yaml
+  - traefik-cors.yaml
+  - certificate.yaml
+  - ingress.yaml

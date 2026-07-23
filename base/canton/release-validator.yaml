@@ -1,0 +1,55 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: splice-validator
+  namespace: ${CANTON_NAMESPACE}
+spec:
+  interval: 15m
+  releaseName: validator
+  targetNamespace: ${CANTON_NAMESPACE}
+  chart:
+    spec:
+      chart: splice-validator
+      version: "${SPLICE_VERSION}"
+      sourceRef:
+        kind: HelmRepository
+        name: decentralized-canton-sync
+        namespace: ${CANTON_NAMESPACE}
+  dependsOn:
+    - name: splice-participant
+    - name: splice-scan
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    svValidator: true
+    # Participant ledger-api (lg-api, port 5001). The splice-validator chart
+    # feeds this into participant-client.ledger-api; the admin port (5002) is
+    # wrong here.
+    participantAddress: "participant.${CANTON_NAMESPACE}.svc.cluster.local"
+    scanClient:
+      scanType: "trust-single"
+      scanAddress: "http://scan-app.${CANTON_NAMESPACE}.svc.cluster.local:5012"
+    auth:
+      audience: "${CANTON_AUDIENCE}"
+      jwksUrl: "https://${KEYCLOAK_HOST}/auth/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
+    nodeIdentifier: "participant"
+    validatorWalletUser: "${VALIDATOR_WALLET_USER}"
+    spliceInstanceNames:
+      networkName: "Canton Network"
+      networkFaviconUrl: "https://canton.network/favicon.ico"
+      amuletName: "Canton Coin"
+      amuletNameAcronym: "CC"
+      nameServiceName: "Canton Name Service"
+      nameServiceNameAcronym: "CNS"
+    persistence:
+      host: "postgres.${CANTON_NAMESPACE}.svc.cluster.local"
+    # Required by splice-validator chart's values.schema.json (the chart ships
+    # no default; without this the HelmRelease fails schema validation).
+    topup:
+      enabled: false

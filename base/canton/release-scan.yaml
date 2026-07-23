@@ -1,0 +1,50 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: splice-scan
+  namespace: ${CANTON_NAMESPACE}
+spec:
+  interval: 15m
+  releaseName: scan
+  targetNamespace: ${CANTON_NAMESPACE}
+  chart:
+    spec:
+      chart: splice-scan
+      version: "${SPLICE_VERSION}"
+      sourceRef:
+        kind: HelmRepository
+        name: decentralized-canton-sync
+        namespace: ${CANTON_NAMESPACE}
+  dependsOn:
+    - name: splice-participant
+    - name: splice-domain
+  install:
+    createNamespace: true
+    # scan's init waits for the participant ledger-api (5001), which only
+    # serves after the sv-app initialises the participant. Give the sv-app
+    # time to do that before scan's install is considered failed.
+    timeout: 15m
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # First/founding SV network — scan must mark itself is-first-sv so the
+    # sv-app (splice-sv-node, found-dso) can bootstrap the DSO against it.
+    isFirstSv: true
+    participantAddress: "participant.${CANTON_NAMESPACE}.svc.cluster.local"
+    persistence:
+      host: "postgres.${CANTON_NAMESPACE}.svc.cluster.local"
+    synchronizers:
+      current:
+        sequencer: "domain.${CANTON_NAMESPACE}.svc.cluster.local"
+        mediator: "domain.${CANTON_NAMESPACE}.svc.cluster.local"
+    spliceInstanceNames:
+      networkName: "Canton Network"
+      networkFaviconUrl: "https://canton.network/favicon.ico"
+      amuletName: "Canton Coin"
+      amuletNameAcronym: "CC"
+      nameServiceName: "Canton Name Service"
+      nameServiceNameAcronym: "CNS"

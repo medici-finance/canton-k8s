@@ -1,0 +1,32 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: splice-postgres
+  namespace: ${CANTON_NAMESPACE}
+spec:
+  interval: 15m
+  releaseName: postgres
+  targetNamespace: ${CANTON_NAMESPACE}
+  chart:
+    spec:
+      chart: splice-postgres
+      # Keep ${SPLICE_VERSION} identical across ALL splice-* HelmReleases in
+      # this base. Pick the chart line matching the Splice network you join
+      # (see the Splice docs for the DevNet/TestNet/MainNet version mapping).
+      version: "${SPLICE_VERSION}"
+      sourceRef:
+        kind: HelmRepository
+        name: decentralized-canton-sync
+        namespace: ${CANTON_NAMESPACE}
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    db:
+      volumeSize: "${POSTGRES_VOLUME_SIZE}"
+      volumeStorageClass: "${STORAGE_CLASS}"

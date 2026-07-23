@@ -1,0 +1,25 @@
+---
+# Example PROD overlay.
+#
+# The base already IS the production shape (RS256-only participant auth,
+# client-credentials for the Splice apps, create-if-missing Keycloak DB).
+# A prod overlay therefore mostly consists of:
+#   * a different env ConfigMap (hostnames, namespace, sizes) — see
+#     examples/env-config.yaml; make sure it sets
+#       KEYCLOAK_DB_RESET: "disabled"
+#       SPLICE_IS_DEV_NET: "false"
+#   * capacity patches like the one below.
+#
+# Intentional dev/prod divergences (disableAuth, fixedTokens, debug RBAC)
+# live only in the dev overlay — never copy them here.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../../base/canton
+
+patches:
+  - path: patch-keycloak-resources.yaml
+    target:
+      kind: Deployment
+      name: keycloak

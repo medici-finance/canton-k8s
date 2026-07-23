@@ -1,0 +1,87 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: splice-sv
+  namespace: ${CANTON_NAMESPACE}
+spec:
+  interval: 15m
+  releaseName: sv
+  targetNamespace: ${CANTON_NAMESPACE}
+  chart:
+    spec:
+      chart: splice-sv-node
+      version: "${SPLICE_VERSION}"
+      sourceRef:
+        kind: HelmRepository
+        name: decentralized-canton-sync
+        namespace: ${CANTON_NAMESPACE}
+  # NOTE: sv does NOT depend on splice-scan. All Canton nodes run
+  # identity.type=manual and wait for the sv-app to initialise them (then they
+  # serve their ledger/public APIs). scan can't become Ready until the sv-app
+  # initialises the participant, so gating sv on scan Ready is a deadlock.
+  # Let the sv-app start once participant+domain are up (admin APIs); it then
+  # initialises the nodes (matching the quickstart's in-process init model).
+  dependsOn:
+    - name: splice-participant
+    - name: splice-domain
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Found a new self-contained network as the first (founding) SV.
+    # This is what initialises the splice-domain synchronizer identity and
+    # creates the DSO. (The upstream helm docs mostly cover JOINING an
+    # existing network; founding via these charts is supported by the chart
+    # but less documented.)
+    onboardingType: "found-dso"
+    onboardingName: "sv"
+    nodeIdentifier: "sv"
+    onboardingFoundingSvRewardWeightBps: 10000
+    contactPoint: ""
+    additionalEnvVars:
+      # The chart sets onboarding.is-dev-net via a quoted env var (string),
+      # which SpliceConfig rejects ("Expected type BOOLEAN. Found STRING").
+      # Override it with a proper HOCON boolean via ADDITIONAL_CONFIG (loaded
+      # after app.conf). See docs/usage.md § "Sharp edges" for the
+      # ADDITIONAL_CONFIG_* alphabetical-ordering rule before adding more.
+      - name: ADDITIONAL_CONFIG_IS_DEV_NET
+        value: "canton.sv-apps.sv.onboarding.is-dev-net = ${SPLICE_IS_DEV_NET}"
+    # Connect to the existing participant / scan / domain in this namespace.
+    # NOTE: no decentralizedSynchronizerUrl — the founding SV (SV1) owns the
+    # local synchronizer and SpliceConfig rejects domains.global.url for it.
+    participantAddress: "participant.${CANTON_NAMESPACE}.svc.cluster.local"
+    scan:
+      publicUrl: "http://scan-app.${CANTON_NAMESPACE}.svc.cluster.local:5012"
+      internalUrl: "http://scan-app.${CANTON_NAMESPACE}.svc.cluster.local:5012"
+    synchronizers:
+      current:
+        sequencerAddress: "domain.${CANTON_NAMESPACE}.svc.cluster.local"
+        mediatorAddress: "domain.${CANTON_NAMESPACE}.svc.cluster.local"
+        sequencerPublicUrl: "http://domain.${CANTON_NAMESPACE}.svc.cluster.local:5008"
+        enableBftSequencer: false
+        sequencerPruningConfig:
+          enabled: false
+      skipInitialization: false   # sv-app initialises the domain synchronizer
+    auth:
+      audience: "${CANTON_AUDIENCE}"
+      jwksUrl: "https://${KEYCLOAK_HOST}/auth/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
+    persistence:
+      host: "postgres.${CANTON_NAMESPACE}.svc.cluster.local"
+      databaseName: "sv"
+      secretName: "postgres-secrets"
+    pvc:
+      # Set to a storageClass that exists in your cluster (the chart default
+      # may not; the sv-app domain-migration PVC fails to bind otherwise).
+      volumeStorageClass: ${STORAGE_CLASS}
+    spliceInstanceNames:
+      networkName: "Canton Network"
+      networkFaviconUrl: "https://canton.network/favicon.ico"
+      amuletName: "Canton Coin"
+      amuletNameAcronym: "CC"
+      nameServiceName: "Canton Name Service"
+      nameServiceNameAcronym: "CNS"

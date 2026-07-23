@@ -1,0 +1,13 @@
+---
+# Wallet UI OIDC client configuration consumed by the splice-validator chart.
+# Holds a PUBLIC client id and the issuer URL — no credential material —
+# but the chart expects a Secret, so it ships as one.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: splice-app-wallet-ui-auth
+  namespace: ${CANTON_NAMESPACE}
+type: Opaque
+stringData:
+  client-id: "${FRONTEND_CLIENT_ID}"
+  url: "https://${KEYCLOAK_HOST}/auth/realms/${KEYCLOAK_REALM}"

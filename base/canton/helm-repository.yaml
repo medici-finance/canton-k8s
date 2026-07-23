@@ -1,0 +1,13 @@
+---
+# Digital Asset's public OCI Helm repository for the Splice charts
+# (splice-postgres, splice-domain, splice-participant, splice-scan,
+# splice-sv-node, splice-validator).
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: decentralized-canton-sync
+  namespace: ${CANTON_NAMESPACE}
+spec:
+  interval: 1h
+  url: oci://ghcr.io/digital-asset/decentralized-canton-sync/helm
+  type: oci

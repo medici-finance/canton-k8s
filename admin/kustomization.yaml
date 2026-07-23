@@ -1,0 +1,33 @@
+---
+# Admin / debug jump-box for a Canton deployment.
+#
+# Variables consumed (via Flux postBuild.substituteFrom):
+#   ADMIN_NAMESPACE      namespace the pod runs in
+#   ADMIN_IMAGE          image with bash, curl, jq, kubectl (e.g. alpine/k8s)
+#   CANTON_API_URL       Canton JSON API v2 base URL
+#   KEYCLOAK_PUBLIC_URL  public Keycloak base URL INCLUDING the relative path
+#                        (e.g. https://keycloak.dev.example.com/auth)
+#   KEYCLOAK_REALM       realm name
+#   FRONTEND_CLIENT_ID   public client used for password-grant user tokens
+#
+# Also requires in ${ADMIN_NAMESPACE} (consumer-supplied):
+#   Secret canton-admin-token   key `token`  — admin bearer token (probes)
+#   Secret keycloak-credentials — optional; only needed for mint-token.sh
+#     (keys it reads: admin-user, admin-password, app-user-password,
+#      <client-id>-client-secret for service clients)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ${ADMIN_NAMESPACE}
+
+resources:
+  - admin-pod.yaml
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: canton-admin-scripts
+    files:
+      - scripts/probe-canton.sh
+      - scripts/verify-user.sh
+      - scripts/mint-token.sh

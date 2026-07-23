@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# dar-deploy.sh — upload a DAR to a Canton participant (JSON API v2) and
+# verify the result on-ledger. Generic: knows nothing about your templates.
+#
+# Inputs (env, set by dar-deploy-job.yaml):
+#   API                  Canton JSON API v2 base URL
+#   PACKAGE_NAME         DAML package name (zip entries look like
+#                        <name>-<version>-<package-id>/...)
+#   EXPECTED_DAR_VERSION version the DAR ConfigMaps must hold (fail closed)
+# Mounts:
+#   /etc/dar/part1..part3/dar.b64   raw DAR slices (from gen-dar-configmaps.sh)
+#   /etc/dar/admin/token            admin bearer token
+#
+# Exit contract: prints exactly one "RESULT: ..." line on success —
+#   RESULT: UPLOADED         a new package landed on the ledger
+#   RESULT: ALREADY-CURRENT  the ledger already had this exact package
+# Anything else (FATAL + non-zero exit) means the deploy did NOT converge.
+#
+# NOTE (scripts shipped via Flux-substituted ConfigMaps): keep this file free
+# of bash colon-dash/colon-equals default expansions (VAR:-x, VAR:=x) — Flux's postBuild envsubst
+# evaluates those forms. Plain "$VAR" with names outside the documented
+# substitution set is safe.
+set -euo pipefail
+
+apt-get update -qq && apt-get install -y -qq curl unzip > /dev/null 2>&1
+command -v curl >/dev/null 2>&1 || { echo "FATAL: curl not installed"; exit 1; }
+command -v unzip >/dev/null 2>&1 || { echo "FATAL: unzip not installed"; exit 1; }
+
+echo "============================================"
+echo "  DAR deploy — package $PACKAGE_NAME, expected version $EXPECTED_DAR_VERSION"
+echo "  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "============================================"
+
+if [ -z "$API" ] || [ -z "$PACKAGE_NAME" ] || [ -z "$EXPECTED_DAR_VERSION" ]; then
+  echo "FATAL: API, PACKAGE_NAME and EXPECTED_DAR_VERSION must all be set"
+  exit 1
+fi
+
+TOKEN=$(cat /etc/dar/admin/token | tr -d '\n\r' | xargs)
+if [ -z "$TOKEN" ]; then
+  echo "FATAL: admin token is empty"
+  exit 1
+fi
+AUTH="Authorization: Bearer $TOKEN"
+
+# ── Reassemble the DAR from the part ConfigMaps ─────────────────────────────
+cat /etc/dar/part1/dar.b64 /etc/dar/part2/dar.b64 /etc/dar/part3/dar.b64 > /tmp/app.dar
+DAR_SIZE=$(wc -c < /tmp/app.dar | tr -d ' ')
+echo "  DAR size: $DAR_SIZE bytes"
+if [ "$DAR_SIZE" -lt 1000 ]; then
+  echo "FATAL: DAR too small ($DAR_SIZE bytes) — check the dar-part ConfigMaps"
+  exit 1
+fi
+
+# ── Version gate (fail closed) ──────────────────────────────────────────────
+# The ConfigMaps are the ONLY DAR this Job can deploy — it does not build from
+# source. If they are stale, the upload is a silent no-op that reports
+# success. Fail loudly instead.
+DAR_VERSION=$(unzip -l /tmp/app.dar 2>/dev/null | grep -oE "$PACKAGE_NAME-[0-9]+\.[0-9]+\.[0-9]+" | head -n1 | sed "s/^$PACKAGE_NAME-//")
+echo "  DAR version (from ConfigMaps): $DAR_VERSION"
+if [ "$DAR_VERSION" != "$EXPECTED_DAR_VERSION" ]; then
+  echo "FATAL: DAR ConfigMaps hold '$DAR_VERSION' but this Job expects '$EXPECTED_DAR_VERSION'."
+  echo "       Regenerate the dar-part ConfigMaps (gen-dar-configmaps.sh) and bump the Job name."
+  exit 1
+fi
+
+# ── Upload ──────────────────────────────────────────────────────────────────
+BEFORE=$(curl -sS "$API/v2/packages" -H "$AUTH" | grep -oE '[0-9a-f]{64}' | sort -u | tr '\n' ' ')
+BEFORE_COUNT=$(echo "$BEFORE" | wc -w | tr -d ' ')
+echo "  Packages before upload: $BEFORE_COUNT"
+
+curl -sS --connect-timeout 10 --max-time 120 \
+  -H "Content-Type: application/octet-stream" -H "$AUTH" \
+  --data-binary @/tmp/app.dar \
+  -o /tmp/upload-response.txt -w '%{http_code}' \
+  "$API/v2/packages" > /tmp/upload-http.txt 2>/tmp/upload-err.txt || true
+UPLOAD_HTTP=$(cat /tmp/upload-http.txt 2>/dev/null || echo "000")
+if [ "$UPLOAD_HTTP" != "200" ] && [ "$UPLOAD_HTTP" != "201" ]; then
+  echo "FATAL: DAR upload failed (HTTP $UPLOAD_HTTP)"
+  head -c 500 /tmp/upload-response.txt || true
+  exit 1
+fi
+echo "  Upload: HTTP $UPLOAD_HTTP"
+
+AFTER=$(curl -sS "$API/v2/packages" -H "$AUTH" | grep -oE '[0-9a-f]{64}' | sort -u | tr '\n' ' ')
+AFTER_COUNT=$(echo "$AFTER" | wc -w | tr -d ' ')
+echo "  Packages after upload: $AFTER_COUNT (before: $BEFORE_COUNT)"
+
+PKG_HASH=$(grep -oE '[0-9a-f]{64}' /tmp/upload-response.txt | head -n1 || true)
+if [ -z "$PKG_HASH" ]; then
+  for id in $AFTER; do
+    case " $BEFORE " in *" $id "*) ;; *) PKG_HASH="$id"; break;; esac
+  done
+fi
+
+# ── Verify ──────────────────────────────────────────────────────────────────
+echo "Verifying package..."
+if [ -z "$PKG_HASH" ]; then
+  # Legitimate no-op: re-uploading the same DAR yields no new package, so
+  # there is no before/after diff to derive the package-id from. But the DAR
+  # carries its own id: every zip entry lives under
+  # "<name>-<version>-<package-id>/". Verify ALREADY-CURRENT as: the DAR's
+  # own id is present in the fresh /v2/packages listing.
+  echo "  NO-OP: package set did not advance — verifying ALREADY-CURRENT..."
+  DAR_SELF_ID=$(unzip -l /tmp/app.dar 2>/dev/null | grep -oE "$PACKAGE_NAME-[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{64}" | head -n1 | grep -oE '[0-9a-f]{64}' || true)
+  if [ -z "$DAR_SELF_ID" ]; then
+    echo "FATAL: could not read the package id from the DAR's own entries."
+    exit 1
+  fi
+  case " $AFTER " in
+    *" $DAR_SELF_ID "*) ;;
+    *)
+      echo "FATAL: upload was a no-op but the DAR's own package id $DAR_SELF_ID is not in /v2/packages — contradictory ledger state."
+      exit 1
+      ;;
+  esac
+  PKG_HASH="$DAR_SELF_ID"
+fi
+
+case " $BEFORE " in
+  *" $PKG_HASH "*) UPLOAD_RESULT="ALREADY-CURRENT" ;;
+  *) UPLOAD_RESULT="UPLOADED" ;;
+esac
+
+# Final round-trip: the id must be listed on the ledger we just talked to.
+curl -sS "$API/v2/packages" -H "$AUTH" | grep -q "$PKG_HASH" || {
+  echo "FATAL: package $PKG_HASH not found on re-listing"
+  exit 1
+}
+
+if [ "$UPLOAD_RESULT" = "UPLOADED" ]; then
+  echo "RESULT: UPLOADED — new package $PKG_HASH (packages: $BEFORE_COUNT -> $AFTER_COUNT)"
+else
+  echo "RESULT: ALREADY-CURRENT — the DAR upload was a NO-OP."
+  echo "(version $DAR_VERSION = EXPECTED_DAR_VERSION, package $PKG_HASH verified against /v2/packages)"
+  echo "Fine on a re-run; a RED FLAG right after a version bump — regenerate the dar-part ConfigMaps."
+fi
