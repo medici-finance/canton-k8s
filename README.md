@@ -24,6 +24,7 @@ License: Apache-2.0.
 | `deploy/` | Generic DAR-deploy Job + scripts (`gen-dar-configmaps.sh`, versioned Job names, on-cluster verification). |
 | `admin/` | Read-only admin/debug pod + diagnostic scripts (`probe-canton.sh`, `verify-user.sh`, `mint-token.sh`). |
 | `skills/canton-auth/` | A cloneable, parameterized diagnostic playbook for the five recurring Canton auth failure classes. |
+| `skills/diagnosing-canton-auth.md` | Companion article: the five auth failure classes as case studies — symptom, root cause, discriminating probe. |
 | `docs/usage.md` | Full usage guide: variables reference, required secrets, overlay pattern, sharp edges. |
 
 ## Quickstart
@@ -81,7 +82,10 @@ Condensed here; full explanations in
 
 Auth debugging beyond that: start from
 [`skills/canton-auth/`](skills/canton-auth/) — symptom → discriminating
-probe → one-line fix, parameterized to any Canton deployment.
+probe → one-line fix, parameterized to any Canton deployment. The narrative
+companion, [How to diagnose auth issues on
+Canton](skills/diagnosing-canton-auth.md), walks the same five failure
+classes as case studies and explains the Canton architecture behind each.
 
 ## Validation
 
