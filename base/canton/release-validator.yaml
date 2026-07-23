@@ -37,7 +37,17 @@ spec:
       scanAddress: "http://scan-app.${CANTON_NAMESPACE}.svc.cluster.local:5012"
     auth:
       audience: "${CANTON_AUDIENCE}"
-      jwksUrl: "https://${KEYCLOAK_HOST}/auth/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
+      # ISSUER/JWKS SPLIT (same rule as release-participant.yaml): tokens are
+      # minted against — and carry in `iss` — the PUBLIC IdP URL, but the JWKS
+      # is fetched over IN-CLUSTER HTTP. The validator-app JVM fetches the
+      # JWKS server-side and validates TLS on that fetch; pointing it at the
+      # public HTTPS ingress means any cert degradation (rate-limited
+      # Let's Encrypt, self-signed fallback — see certificate.yaml) silently
+      # kills all RS256 validation. The JWKS carries only public keys, so the
+      # in-cluster hop leaks nothing. Feeds inbound validator API token
+      # validation; the ledger-api leg uses the splice-app auth secret (or
+      # fixedTokens under the dev overlay), not this URL.
+      jwksUrl: "http://keycloak.${CANTON_NAMESPACE}.svc.cluster.local:8080/auth/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
     nodeIdentifier: "participant"
     validatorWalletUser: "${VALIDATOR_WALLET_USER}"
     spliceInstanceNames:

@@ -69,7 +69,7 @@ values: [`examples/env-config.yaml`](../examples/env-config.yaml).
 |---|---|---|
 | `CANTON_NAMESPACE` | `canton-dev` | Namespace for every Canton/Splice/Keycloak object; also derives all in-cluster service URLs (`postgres.<ns>.svc…`, `keycloak.<ns>.svc…`). |
 | `BASE_DOMAIN` | `dev.example.com` | Wildcard certificate (`*.<BASE_DOMAIN>`). |
-| `KEYCLOAK_HOST` | `keycloak.dev.example.com` | Keycloak ingress host, public issuer URL (`KC_HOSTNAME_URL`), sv/validator JWKS URLs. |
+| `KEYCLOAK_HOST` | `keycloak.dev.example.com` | Keycloak ingress host, public issuer URL (`KC_HOSTNAME_URL`), UI-auth issuer URLs. JWKS fetches deliberately do NOT use it — see sharp edge 2. |
 | `CANTON_API_HOST` | `canton.dev.example.com` | Participant JSON API ingress host. |
 | `VALIDATOR_HOST` | `validator.dev.example.com` | Validator API ingress host. |
 | `FRONTEND_URL` | `https://app.dev.example.com` | CORS allow-origin, frontend client redirect URIs / web origins. |
@@ -99,6 +99,7 @@ values: [`examples/env-config.yaml`](../examples/env-config.yaml).
 | `DAR_PACKAGE_NAME` | `my-package` | Your DAML package name (`daml.yaml` `name:`); used for the version gate. |
 | `DAR_VERSION` | `0.1.0` | Version the Job expects in the DAR ConfigMaps (fail-closed gate). |
 | `DAR_DEPLOY_JOB_VERSION` | `v1` | Job-name suffix — bump on EVERY Job/script/DAR change (immutable Job specs, see below). |
+| `DAR_DEPLOY_DEADLINE_SECONDS` | `900` | `activeDeadlineSeconds` for the whole Job, init-waits included — a hung bring-up fails loudly as `DeadlineExceeded` instead of sitting `Init:0/2` forever. Raise for slow first installs. |
 
 ### admin/ (additionally)
 
@@ -167,6 +168,14 @@ And the version gate (`EXPECTED_DAR_VERSION` vs. the version read out of the
 DAR zip itself) makes a stale-ConfigMap deploy fail loudly instead of
 "succeeding" as a silent no-op.
 
+The Job also carries `activeDeadlineSeconds`
+(`DAR_DEPLOY_DEADLINE_SECONDS`, default example `900`) covering the
+init-waits too: if the participant/validator never come up, the Job fails
+**loudly** with `DeadlineExceeded` instead of hanging `Init:0/2` forever. A
+`DeadlineExceeded` dar-deploy Job is the intended failure mode for a broken
+bring-up — investigate the waits' logs, fix, then bump
+`DAR_DEPLOY_JOB_VERSION` to re-run.
+
 ## Admin pod (admin/)
 
 A read-only jump-box with the admin token and diagnostic scripts mounted:
@@ -209,7 +218,11 @@ participant JVM validates TLS on that fetch, and an untrusted/self-signed
 ingress cert (e.g. after a Let's Encrypt rate limit; see
 `base/canton/certificate.yaml`) kills ALL RS256 auth with an opaque
 `JwtException: null`. The JWKS holds only public keys; the in-cluster hop
-leaks nothing.
+leaks nothing. The split applies to **every server-side JWKS consumer**, not
+just the participant: the sv-app and validator-app `auth.jwksUrl` in this
+base use the same in-cluster HTTP form (and include Keycloak's `/auth`
+relative path — a public URL without it 404s). Only browser-facing issuer
+URLs (UI auth secrets, `KC_HOSTNAME_URL`) use `https://${KEYCLOAK_HOST}`.
 
 ### 3. Immutable Job specs → versioned Job names
 
