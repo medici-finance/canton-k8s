@@ -70,6 +70,7 @@ Example config: `config.example.yaml`.
 ## Companion article
 
 The technical article "[How to diagnose auth issues on Canton](../diagnosing-canton-auth.md)"
+(in this repository at `skills/diagnosing-canton-auth.md`)
 walks through the same five failure classes as case studies, explains the Canton
 architecture behind each one, and describes how the diagnostic skill and typed-client
 invariants relate — the skill as cure (diagnose after breakage), the typed client as
