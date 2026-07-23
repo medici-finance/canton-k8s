@@ -19,7 +19,7 @@
 # TWO SUBSTITUTION LAYERS — read before editing:
 #   1. ${CANTON_NAMESPACE}-style vars are replaced by Flux at apply time
 #      (postBuild.substituteFrom). Undefined vars are left untouched.
-#   2. ${APP_USER_VALIDATOR_CLIENT_SECRET}-style placeholders are replaced by
+#   2. $${APP_USER_VALIDATOR_CLIENT_SECRET}-style placeholders are replaced by
 #      envsubst in the keycloak Deployment's realm-import init container at
 #      POD START, from the keycloak-credentials Secret. They MUST NOT appear
 #      in your Flux env ConfigMap, or Flux would substitute them first.
@@ -46,7 +46,7 @@ data:
         {
           "clientId": "app-user-validator",
           "name": "App User Validator",
-          "secret": "${APP_USER_VALIDATOR_CLIENT_SECRET}",
+          "secret": "$${APP_USER_VALIDATOR_CLIENT_SECRET}",
           "serviceAccountsEnabled": true,
           "authorizationServicesEnabled": false,
           "publicClient": false,
@@ -68,7 +68,7 @@ data:
         {
           "clientId": "app-user-sv",
           "name": "App User SV (sv-app + scan)",
-          "secret": "${APP_USER_SV_CLIENT_SECRET}",
+          "secret": "$${APP_USER_SV_CLIENT_SECRET}",
           "serviceAccountsEnabled": true,
           "authorizationServicesEnabled": false,
           "publicClient": false,
@@ -90,7 +90,7 @@ data:
         {
           "clientId": "validator-app-backend",
           "name": "Validator App Backend",
-          "secret": "${VALIDATOR_APP_BACKEND_CLIENT_SECRET}",
+          "secret": "$${VALIDATOR_APP_BACKEND_CLIENT_SECRET}",
           "serviceAccountsEnabled": true,
           "authorizationServicesEnabled": false,
           "publicClient": false,
@@ -202,7 +202,7 @@ data:
           "credentials": [
             {
               "type": "password",
-              "value": "${APP_USER_PASSWORD}"
+              "value": "$${APP_USER_PASSWORD}"
             }
           ],
           "realmRoles": ["default-roles-${KEYCLOAK_REALM_LOWER}"]
@@ -217,7 +217,7 @@ data:
           "credentials": [
             {
               "type": "password",
-              "value": "${ADMIN_PASSWORD}"
+              "value": "$${ADMIN_PASSWORD}"
             }
           ],
           "realmRoles": ["admin"]
