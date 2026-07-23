@@ -44,21 +44,21 @@ spec:
             - -c
             - |
               set -e
-              export PGPASSWORD="${KC_INIT_PG_ADMIN_PASSWORD}"
+              export PGPASSWORD="$${KC_INIT_PG_ADMIN_PASSWORD}"
               echo "Waiting for postgres..."
-              until psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c "SELECT 1" > /dev/null 2>&1; do
+              until psql -h "$${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c "SELECT 1" > /dev/null 2>&1; do
                 echo "  still waiting..."
                 sleep 2
               done
               echo "Postgres is ready."
 
               # Create role if not exists
-              psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -tc \
-                "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname='${KC_INIT_DB_USER}'" 2>/dev/null | grep -q 1 || \
-              psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c \
-                "CREATE ROLE \"${KC_INIT_DB_USER}\" WITH LOGIN PASSWORD '${KC_INIT_DB_PASSWORD}'"
+              psql -h "$${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -tc \
+                "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname='$${KC_INIT_DB_USER}'" 2>/dev/null | grep -q 1 || \
+              psql -h "$${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c \
+                "CREATE ROLE \"$${KC_INIT_DB_USER}\" WITH LOGIN PASSWORD '$${KC_INIT_DB_PASSWORD}'"
 
-              if [ "${KC_INIT_RESET_DB}" = "enabled" ]; then
+              if [ "$${KC_INIT_RESET_DB}" = "enabled" ]; then
                 # DEV MODE ONLY: drop the Keycloak database if it exists —
                 # forces a fresh realm import on every restart so realm
                 # ConfigMap changes (redirectUris, mappers, clients) take
@@ -66,15 +66,15 @@ spec:
                 # This DESTROYS all Keycloak state (users, sessions) — never
                 # enable it on an environment with real users.
                 echo "KC_INIT_RESET_DB=enabled — recreating Keycloak database..."
-                psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c \
+                psql -h "$${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c \
                   "DROP DATABASE IF EXISTS keycloakdb WITH (FORCE)"
               fi
 
               # Create database if not exists, owned by the keycloak user
-              psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -tc \
+              psql -h "$${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -tc \
                 "SELECT 1 FROM pg_catalog.pg_database WHERE datname='keycloakdb'" 2>/dev/null | grep -q 1 || \
-              psql -h "${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c \
-                "CREATE DATABASE keycloakdb OWNER \"${KC_INIT_DB_USER}\""
+              psql -h "$${KC_INIT_PG_HOST}" -U cnadmin -d cantonnet -c \
+                "CREATE DATABASE keycloakdb OWNER \"$${KC_INIT_DB_USER}\""
 
               echo "Keycloak database and user are ready."
           env:
