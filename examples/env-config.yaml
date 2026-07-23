@@ -58,6 +58,8 @@ data:
   DAR_PACKAGE_NAME: "my-package"           # DAML package name (daml.yaml `name:`)
   DAR_VERSION: "0.1.0"                     # must match the DAR in the dar-part ConfigMaps
   DAR_DEPLOY_JOB_VERSION: "v1"             # bump on EVERY Job spec/script/DAR change
+  DAR_DEPLOY_DEADLINE_SECONDS: "900"       # whole-Job deadline (init-waits incl.);
+                                           # hung bring-up => DeadlineExceeded, loud
 
   # ── admin/ (debug pod) — only if you use admin/ ──────────────────────────
   ADMIN_IMAGE: "alpine/k8s:1.31.1"         # needs bash, curl, jq, kubectl

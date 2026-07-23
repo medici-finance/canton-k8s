@@ -34,6 +34,13 @@ spec:
   # Keep the Job + pods ~24h after finish so a failed attempt survives for
   # diagnosis (short TTLs erase failure logs before anyone reads them).
   ttlSecondsAfterFinished: 86400
+  # Bound the WHOLE Job (init-waits included). Without this, a broken
+  # bring-up leaves the pod Init:0/2 forever — green-looking and silent.
+  # A DeadlineExceeded Job is the INTENDED loud-failure mode: it pages via
+  # whatever watches Job failures instead of hanging. 900s default; raise via
+  # DAR_DEPLOY_DEADLINE_SECONDS for slow first installs (fresh Splice
+  # networks can take longer to converge).
+  activeDeadlineSeconds: ${DAR_DEPLOY_DEADLINE_SECONDS}
   # Retry a couple of times: transient readiness races and slow first-listing
   # responses are worth a retry since the upload is idempotent.
   backoffLimit: 2

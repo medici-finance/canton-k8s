@@ -9,6 +9,10 @@
 #   DAR_DEPLOY_JOB_VERSION   bump on EVERY change to the Job spec, the scripts,
 #                            or the DAR ConfigMaps (Job specs are immutable —
 #                            see dar-deploy-job.yaml header)
+#   DAR_DEPLOY_DEADLINE_SECONDS  activeDeadlineSeconds for the whole Job incl.
+#                            init-waits (e.g. "900") — a hung bring-up fails
+#                            loudly as DeadlineExceeded instead of sitting
+#                            Init:0/2 forever
 #
 # Also requires in ${ADMIN_NAMESPACE}:
 #   Secret     canton-admin-token   key `token` — an admin bearer token for
