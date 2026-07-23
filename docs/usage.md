@@ -279,4 +279,6 @@ issuer/JWKS split, masked security-sensitive errors, DAML numeric JSON
 encoding, party-hint truncation) use the parameterized playbook in
 [`skills/canton-auth/`](../skills/canton-auth/): copy
 `config.example.yaml`, fill in your participant URL / issuer / JWKS URL /
-package name, and follow `diagnosis-flow.md`.
+package name, and follow `diagnosis-flow.md`. For the architecture behind
+each failure class, read the companion article
+[How to diagnose auth issues on Canton](../skills/diagnosing-canton-auth.md).
