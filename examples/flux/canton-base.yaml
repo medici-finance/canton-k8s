@@ -5,6 +5,11 @@
 # moving branch. This repo is a public source; a branch ref would let any
 # future commit (or a compromised one) flow straight into your cluster.
 # Review, then bump the pin deliberately.
+#
+# AND WATCH FOR UPDATES. A pin you never bump is a deployment frozen on the day
+# you adopted it, security fixes included, and Flux will not tell you. Watch
+# this repo's Releases and Security advisories — see docs/usage.md,
+# "Then watch for updates".
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -15,7 +20,7 @@ spec:
   url: https://github.com/medici-finance/canton-k8s
   ref:
     # Pin by tag…
-    tag: v0.1.0
+    tag: v0.1.1
     # …or, stricter, by commit:
     # commit: 0123456789abcdef0123456789abcdef01234567
 ---
