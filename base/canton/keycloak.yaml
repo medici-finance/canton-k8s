@@ -112,7 +112,29 @@ spec:
               apk add --no-cache gettext > /dev/null 2>&1
               echo "Templating realm.json with Secret values..."
               export APP_USER_VALIDATOR_CLIENT_SECRET APP_USER_SV_CLIENT_SECRET APP_USER_PASSWORD ADMIN_PASSWORD VALIDATOR_APP_BACKEND_CLIENT_SECRET
-              envsubst < /etc/realm/realm.json > /opt/keycloak/data/import/realm.json
+              # Substitute ONLY these five secret placeholders. A bare `envsubst`
+              # replaces every ${...} it finds, and an UNDEFINED variable expands to
+              # the EMPTY STRING — so a client added to the realm without extending
+              # the export/env lists imports with secret "", silently weakening auth
+              # instead of failing. The allow-list leaves anything unexpected intact
+              # so the check below can catch it. ($$ escapes Flux postBuild, matching
+              # the kc-db-init container above.)
+              envsubst '$${APP_USER_VALIDATOR_CLIENT_SECRET} $${APP_USER_SV_CLIENT_SECRET} $${APP_USER_PASSWORD} $${ADMIN_PASSWORD} $${VALIDATOR_APP_BACKEND_CLIENT_SECRET}' \
+                < /etc/realm/realm.json > /opt/keycloak/data/import/realm.json
+              # Fail CLOSED. A surviving placeholder means a value was never supplied:
+              # either a secret missing from this container's env, or a Flux postBuild
+              # variable the consumer's ConfigMap does not define — those land
+              # literally rather than erroring (docs/usage.md, "fails soft"). Importing
+              # such a realm weakens auth quietly, so abort the rollout loudly.
+              # -F (fixed string) is deliberate: as a BASIC regex, '$${' is read as an
+              # interval operator by BSD/GNU grep and matches NOTHING, so the unescaped
+              # form silently never fires — a fail-closed check that always passes.
+              if grep -qF '$${' /opt/keycloak/data/import/realm.json; then
+                echo "ERROR: realm.json still contains unsubstituted placeholders — refusing to import." >&2
+                echo "Supply these via the realm-import env (secrets) or Flux postBuild (everything else):" >&2
+                grep -oE '\$$\{[A-Za-z_][A-Za-z0-9_]*\}' /opt/keycloak/data/import/realm.json | sort -u >&2
+                exit 1
+              fi
               echo "Realm import file ready."
           env:
             - name: APP_USER_VALIDATOR_CLIENT_SECRET
