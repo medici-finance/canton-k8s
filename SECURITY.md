@@ -44,13 +44,12 @@ Either way, what you can expect: the fix lands, a release tag is cut so consumer
 to it, and the advisory names that tag as the patched version. If you reported the issue
 and want credit, say so and we will name you.
 
-**A note on the mechanics.** Merging an embargoed fix requires briefly relaxing this
-repository's own default-branch protection, because an advisory merge cannot satisfy the
-pull-request and status-check rules. We treat that window as something to bound and verify
-rather than to normalise, and we deliberately do **not** grant any actor a standing bypass
-of branch protection — ruleset bypass cannot be scoped to advisory merges, so it would mean
-unreviewed pushes to the default branch indefinitely. The step-by-step is a maintainer
-runbook and is kept with our internal operations documentation.
+**A note on the mechanics.** An embargoed fix is merged from the advisory page by a
+maintainer, which is a different path from an ordinary pull request. We do **not** relax
+this repository's branch protection to do it, and we do **not** grant any actor a standing
+bypass of that protection — ruleset bypass cannot be scoped to a single merge path, so it
+would mean unreviewed pushes to the default branch indefinitely. The step-by-step is a
+maintainer runbook kept with our internal operations documentation.
 
 ## Staying current
 
