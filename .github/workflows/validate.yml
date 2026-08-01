@@ -111,36 +111,82 @@ jobs:
           shellcheck --severity=style "${scripts[@]}"
           echo "shellcheck: clean"
 
-      - name: Kustomize build + substitute example values + kubeconform
+      - name: Kustomize build + placeholder guard + substitute example values + kubeconform
         run: |
           set -euo pipefail
           chmod +x hack/substitute.sh
           mkdir -p /tmp/rendered
+
+          # hack/substitute.sh stands in for Flux's substituter, and everything
+          # below validates whatever it emits — so a defect in the emulation
+          # makes every check here vouch for an artifact Flux never produces.
+          # Lock its semantics to a golden file: every line of it except the one
+          # marked DIVERGENCE was measured against `flux envsubst`, the CLI over
+          # the same engine postBuild runs.
+          echo "=== self-test: substitute.sh vs Flux escape semantics ==="
+          ./hack/substitute.sh hack/testdata/selftest-input.txt \
+            hack/testdata/selftest-env.yaml > /tmp/rendered/selftest.out
+          diff -u hack/testdata/selftest-expected.txt /tmp/rendered/selftest.out
+          echo "substitute.sh: OK"
+
+          yq eval '.data | keys | .[]' examples/env-config.yaml | sort -u > /tmp/rendered/env-keys.txt
+
           for target in base/canton examples/overlays/dev examples/overlays/prod deploy admin; do
             name=$(echo "$target" | tr '/' '-')
             echo "=== kustomize build $target ==="
             kustomize build "$target" > "/tmp/rendered/$name.yaml"
-            echo "=== substitute example values ==="
-            ./hack/substitute.sh "/tmp/rendered/$name.yaml" examples/env-config.yaml > "/tmp/rendered/$name.sub.yaml"
-            echo "=== check: no unresolved placeholders in k8s fields ==="
-            # Scripts inside ConfigMaps legitimately contain shell $VARS; only
-            # fail on placeholders that survive OUTSIDE ConfigMap data blocks.
-            # Cheap approximation: strip ConfigMap documents, then grep.
-            # ${KC_INIT_*} is the keycloak Deployment's pod-runtime init-script
-            # namespace (deliberately disjoint from the Flux var set) — allowed.
-            # `$${VAR}` is the ESCAPED form: Flux's envsubst consumes one `$` and
-            # emits a literal `${VAR}` for pod runtime, so it is deliberate, not
-            # unresolved. Strip `$$` pairs left-to-right (the same semantics) before
-            # matching, so `$$${VAR}` — one escape plus a real substitution site —
-            # still fails. Then require a variable-shaped name after `${`: no
-            # closing `}` is demanded, so `${VAR:-x}` fails too, while prose such as
-            # `${...}` is correctly not a placeholder. Hits print escape-stripped.
-            yq eval 'select(.kind != "ConfigMap")' "/tmp/rendered/$name.sub.yaml" > "/tmp/rendered/$name.noncm.yaml"
-            if sed 's/\$\$//g' "/tmp/rendered/$name.noncm.yaml" \
-                 | grep -nE '\$\{[A-Za-z_]' | grep -v '\${KC_INIT_'; then
-              echo "FATAL: unresolved \${...} placeholder outside ConfigMap data in $target"
+
+            echo "=== check: placeholders in $target ==="
+            # The guard reads the PRE-substitution artifact — the exact bytes
+            # Flux itself substitutes. It cannot be run afterwards: once
+            # rendered, a deliberate `$${VAR}` and a genuinely undefined
+            # `${VAR}` are the same four bytes, so the distinction only exists
+            # here. That also makes the guard independent of how faithfully
+            # substitute.sh emulates Flux.
+            #
+            # `$$` is Flux's escape — it consumes the pair and emits one literal
+            # `$`. Deleting the pairs left-to-right leaves exactly the set of
+            # `${` sites Flux will act on, so `$$${VAR}` (one escape plus a real
+            # site) still reduces to `${VAR}` and is still judged.
+            sed 's/\$\$//g' "/tmp/rendered/$name.yaml" > "/tmp/rendered/$name.sites.yaml"
+
+            # (a) SHAPE — whole artifact, ConfigMap data included. Flux's engine
+            # aborts the ENTIRE Kustomization with "unable to parse variable
+            # name" on a `${` that is not a well-formed `${IDENT}`, so prose
+            # containing a brace-ellipsis is not a harmless non-placeholder, it
+            # is fatal to reconciliation. `${VAR:-x}` is caught here too: Flux
+            # would silently apply the default (docs/usage.md sharp edge 4).
+            # Delete the well-formed sites; whatever still opens a brace is bad.
+            if sed 's/\${[A-Za-z_][A-Za-z0-9_]*}//g' "/tmp/rendered/$name.sites.yaml" \
+                 | grep -n '\${'; then
+              echo "FATAL: \${ in $target that is not a plain \${IDENT} — Flux's substituter"
+              echo "       either rejects the whole Kustomization or applies a default expansion."
               exit 1
             fi
+
+            # (b) RESOLUTION — every substitution site outside ConfigMap data
+            # must be defined by the example env ConfigMap; an undefined one is
+            # replaced with the EMPTY STRING when Flux reconciles.
+            # Matched per OCCURRENCE, never per line: a line-level exemption
+            # (`grep -v`) drops the whole line, so one tolerated token can mask
+            # a real placeholder that happens to share it.
+            # KNOWN GAP: ConfigMap data is exempt because its scripts hold
+            # runtime shell variables. Bare `$VAR` is genuinely safe (Flux only
+            # opens a site on `${`), but a BRACED `${VAR}` inside a ConfigMap
+            # script is NOT — Flux blanks it in-cluster, unseen by this gate.
+            yq eval 'select(.kind != "ConfigMap")' "/tmp/rendered/$name.sites.yaml" \
+              | { grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' || true; } \
+              | tr -d '${}' | sort -u > "/tmp/rendered/$name.used.txt"
+            comm -23 "/tmp/rendered/$name.used.txt" /tmp/rendered/env-keys.txt \
+              > "/tmp/rendered/$name.undef.txt"
+            if [ -s "/tmp/rendered/$name.undef.txt" ]; then
+              echo "FATAL: placeholder(s) in $target that examples/env-config.yaml does not define:"
+              sed 's/^/  /' "/tmp/rendered/$name.undef.txt"
+              exit 1
+            fi
+
+            echo "=== substitute example values ==="
+            ./hack/substitute.sh "/tmp/rendered/$name.yaml" examples/env-config.yaml > "/tmp/rendered/$name.sub.yaml"
             echo "=== kubeconform $target ==="
             kubeconform -strict -ignore-missing-schemas -summary "/tmp/rendered/$name.sub.yaml"
           done

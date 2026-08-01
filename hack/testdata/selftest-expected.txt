@@ -1,0 +1,14 @@
+Input for the hack/substitute.sh self-test. SELFTEST_DEFINED=resolved.
+Every case below renders byte-identically to `flux envsubst` except the single
+line marked DIVERGENCE, which is substitute.sh's deliberate handling of an
+undefined variable (Flux blanks it; see hack/substitute.sh header, point 3).
+plain            resolved
+escaped          ${SELFTEST_DEFINED}
+escape-then-site $resolved
+two-escapes      $${SELFTEST_DEFINED}
+bare             $SELFTEST_DEFINED
+lone-pair        $
+adjacent         a${SELFTEST_DEFINED}bresolvedc
+escaped-undef    ${SELFTEST_UNDEFINED}
+DIVERGENCE undef ${SELFTEST_UNDEFINED}
+trailing dollar  $

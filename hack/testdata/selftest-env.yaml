@@ -1,0 +1,11 @@
+---
+# Fixed variable set for the hack/substitute.sh self-test, kept separate from
+# examples/env-config.yaml so that editing an example value cannot break the
+# golden file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: substitute-selftest
+  namespace: flux-system
+data:
+  SELFTEST_DEFINED: "resolved"
