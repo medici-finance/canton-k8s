@@ -6,23 +6,110 @@ on:
     branches: [main]
   pull_request:
 
+# This job only reads the checked-out tree. Without an explicit block the
+# GITHUB_TOKEN inherits the repository/organisation default, which on many
+# installations is still read+write across contents, issues, packages and
+# more. Narrow it to what the job actually needs: read the code.
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install tools (kustomize, kubeconform, yq)
+      - name: Install tools (kustomize, kubeconform, shellcheck, yq)
         run: |
           set -euo pipefail
+
+          # Every third-party binary this CI runs is pinned to a version AND to
+          # the SHA-256 of the exact release asset, and the checksum is compared
+          # BEFORE the archive is unpacked or anything is made executable. The
+          # previous `curl … | tar -xz -C /usr/local/bin` piped an unverified
+          # archive straight into extraction: no checksum at all, and the
+          # extracted binary inherited its +x bit from the tarball, at a stable
+          # path, before anything had vouched for it.
+          #
+          # Tools are installed into a per-job mktemp directory rather than
+          # /usr/local/bin. On GitHub-hosted runners the whole VM is discarded
+          # after the job, so a stable path is not itself exploitable — but this
+          # workflow is an adopter-facing template that gets copied onto
+          # self-hosted runners, where a predictable path outlives the job.
+          # Nothing untrusted is ever written into the directory that goes on
+          # PATH: downloads land in a staging dir and are moved across only
+          # after their hash matches.
           KUSTOMIZE_VERSION=v5.4.3
+          KUSTOMIZE_SHA256=3669470b454d865c8184d6bce78df05e977c9aea31c30df3c669317d43bcc7a7
           KUBECONFORM_VERSION=v0.6.7
-          curl -sSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" \
-            | tar -xz -C /usr/local/bin kustomize
-          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
-            | tar -xz -C /usr/local/bin kubeconform
+          KUBECONFORM_SHA256=95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
+          SHELLCHECK_VERSION=v0.11.0
+          SHELLCHECK_SHA256=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+
+          TOOLROOT=$(mktemp -d)
+          BINDIR="$TOOLROOT/bin"
+          STAGE="$TOOLROOT/stage"
+          mkdir -p "$BINDIR" "$STAGE"
+
+          # install_pinned <bin-name> <url> <sha256> <tar-flag> <member-path>
+          install_pinned() {
+            name="$1"; url="$2"; expected="$3"; tarflag="$4"; member="$5"
+            archive="$STAGE/$name.archive"
+            curl -sSfL "$url" -o "$archive"
+            actual=$(sha256sum "$archive" | awk '{print $1}')
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$name checksum mismatch: expected $expected, got $actual"
+              rm -f "$archive"
+              exit 1
+            fi
+            # Verified: only now may it be unpacked, made executable, or placed
+            # on PATH.
+            tar "-x${tarflag}f" "$archive" -C "$STAGE" "$member"
+            chmod +x "$STAGE/$member"
+            mv "$STAGE/$member" "$BINDIR/$name"
+            rm -f "$archive"
+            echo "$name $expected verified"
+          }
+
+          install_pinned kustomize \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" \
+            "$KUSTOMIZE_SHA256" z kustomize
+          install_pinned kubeconform \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            "$KUBECONFORM_SHA256" z kubeconform
+          install_pinned shellcheck \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+            "$SHELLCHECK_SHA256" J "shellcheck-${SHELLCHECK_VERSION}/shellcheck"
+
+          echo "$BINDIR" >> "$GITHUB_PATH"
           # yq + envsubst are preinstalled on ubuntu-latest; assert anyway
           yq --version && envsubst --version | head -1
+
+      - name: Lint shell scripts (bash -n + shellcheck)
+        run: |
+          set -euo pipefail
+          # The scripts in deploy/ and admin/ ship on the reference images and
+          # inside Flux-substituted ConfigMaps; adopters run them verbatim. CI
+          # validated YAML only, so shell defects shipped green.
+          #
+          # Both checks are BLOCKING. They are clean on the current tree — see
+          # the PR that added this step — and shellcheck is pinned by checksum
+          # above, so a future release cannot red main on its own.
+          mapfile -t scripts < <(git ls-files '*.sh')
+          # A lint gate that finds nothing passes vacuously — `bash -n` over an
+          # empty list exits 0 and reports "clean". If the file list is ever
+          # empty (a broken checkout, a moved directory), fail loudly instead of
+          # reporting a green gate that inspected nothing.
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "FATAL: no *.sh files found to lint — this gate would have passed without checking anything."
+            exit 1
+          fi
+          printf 'linting %d script(s):\n' "${#scripts[@]}"
+          printf '  %s\n' "${scripts[@]}"
+          for s in "${scripts[@]}"; do bash -n "$s"; done
+          echo "bash -n: clean"
+          shellcheck --severity=style "${scripts[@]}"
+          echo "shellcheck: clean"
 
       - name: Kustomize build + substitute example values + kubeconform
         run: |
@@ -78,6 +165,21 @@ jobs:
           PATTERN='sops[:]|ENC\[|medici[.]loan|medici-(dev|prod)|iholsma[n]|joji[g]'
           if grep -rInE "$PATTERN" . --exclude-dir=.git; then
             echo "FATAL: denylisted token found (see matches above)"
+            exit 1
+          fi
+
+          # The denylist above is a fixed list of six strings we know we do not
+          # want; it says nothing about credentials nobody thought to enumerate.
+          # These shape-based patterns catch the generic article: a real JWT, a
+          # PEM private key, a GitHub token, an AWS access-key id. Each pattern
+          # is written so it cannot match its own text in this file (the literal
+          # `[`/`{` that follows each prefix is outside the character class that
+          # would have to match it).
+          CREDENTIAL='eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}'
+          if grep -rInE "$CREDENTIAL" . --exclude-dir=.git; then
+            echo "FATAL: something credential-shaped is committed (see matches above)"
+            echo "       A JWT, private key or cloud/API token must never land in this public repo."
+            echo "       Treat it as leaked: rotate it, then remove it from history."
             exit 1
           fi
           echo "clean"
