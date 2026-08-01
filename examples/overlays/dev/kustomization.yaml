@@ -7,6 +7,8 @@
 #     PLUS re-appending the jwt-jwks validator so real RS256 tokens keep
 #     working next to the HS256 one (see patch-participant-dev-auth.yaml —
 #     the env var NAME matters, read the comment before renaming).
+#   * keycloak: start-dev instead of the base's production `start`
+#     (see patch-keycloak-dev-mode.yaml).
 #   * scan / sv / validator: cluster.fixedTokens=true (the Splice apps talk
 #     to the participant with static tokens instead of client-credentials).
 #   * debug RBAC: lets an admin/debug pod in ${ADMIN_NAMESPACE} read pod logs
@@ -27,6 +29,10 @@ patches:
     target:
       kind: HelmRelease
       name: splice-participant
+  - path: patch-keycloak-dev-mode.yaml
+    target:
+      kind: Deployment
+      name: keycloak
   - path: patch-fixed-tokens.yaml
     target:
       kind: HelmRelease

@@ -143,6 +143,13 @@ your choice):
 | `splice-app-sv-ledger-api-auth` | same shape as above | splice-sv-node, splice-scan |
 | `canton-admin-token` | `token` — an admin bearer token for the JSON API | deploy/ Job, admin/ pod (in `${ADMIN_NAMESPACE}`) |
 
+`admin-realm-password` belongs to the realm's `admin` bootstrap user, which
+holds the `realm-management` client role `realm-admin` — full administrative
+rights **over `${KEYCLOAK_REALM}`** (not over Keycloak as a whole; that is the
+separate master-realm account behind `admin-user` / `admin-password`). Treat it
+as a privileged credential, or drop the user in your overlay if you administer
+the realm some other way.
+
 Extend `keycloak-credentials` with one `<client-id>-client-secret` key per
 service client your application adds to the realm (and mirror it into the
 realm-import init container's env + export list — see
@@ -155,7 +162,8 @@ Scalars (hostnames, sizes, versions) belong in the env ConfigMap.
 
 * `examples/overlays/dev` — participant `disableAuth: true` **plus** the
   `ADDITIONAL_CONFIG_JWT_JWKS` re-append, `cluster.fixedTokens: true` for
-  scan/sv/validator, debug-pod RBAC. Pair with `KEYCLOAK_DB_RESET: "enabled"`.
+  scan/sv/validator, Keycloak `start-dev`, debug-pod RBAC. Pair with
+  `KEYCLOAK_DB_RESET: "enabled"`.
 * `examples/overlays/prod` — the base as-is (the base *is* the production
   shape) + a capacity patch example. Pair with `KEYCLOAK_DB_RESET: "disabled"`.
 

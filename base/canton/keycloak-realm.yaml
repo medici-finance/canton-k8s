@@ -15,6 +15,14 @@
 #     audience_canton_network (aud=${CANTON_AUDIENCE} mapper)
 #   users:
 #     app-user, admin        (bootstrap; passwords from keycloak-credentials)
+#     `admin` administers THIS realm and holds the realm-management client role
+#     `realm-admin` — Keycloak's built-in per-realm administrator role. (It used
+#     to be given a realm role literally named "admin", which this realm never
+#     defines: import silently drops or rejects an assignment to an undefined
+#     role, so the grant never reliably applied.) The realm-management client
+#     and its roles are created by Keycloak for every realm; nothing to define
+#     here. If your deployment does not want a realm-admin bootstrap account,
+#     drop this user in your overlay — do NOT leave it with a dangling role.
 #
 # TWO SUBSTITUTION LAYERS — read before editing:
 #   1. ${CANTON_NAMESPACE}-style vars are replaced by Flux at apply time
@@ -220,7 +228,10 @@ data:
               "value": "$${ADMIN_PASSWORD}"
             }
           ],
-          "realmRoles": ["admin"]
+          "realmRoles": ["default-roles-${KEYCLOAK_REALM_LOWER}"],
+          "clientRoles": {
+            "realm-management": ["realm-admin"]
+          }
         }
       ]
     }
