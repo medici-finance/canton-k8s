@@ -45,11 +45,11 @@ to it, and the advisory names that tag as the patched version. If you reported t
 and want credit, say so and we will name you.
 
 **A note on the mechanics.** An embargoed fix is merged from the advisory page by a
-maintainer, which is a different path from an ordinary pull request. We do **not** relax
-this repository's branch protection to do it, and we do **not** grant any actor a standing
-bypass of that protection — ruleset bypass cannot be scoped to a single merge path, so it
-would mean unreviewed pushes to the default branch indefinitely. The step-by-step is a
-maintainer runbook kept with our internal operations documentation.
+maintainer, which is a different path from an ordinary pull request. We do **not** grant any
+actor a standing bypass of this repository's branch protection — bypass is granted per actor
+over a whole ruleset and cannot be scoped to one merge path, so it would mean unreviewed
+pushes to the default branch indefinitely. The step-by-step is a maintainer runbook kept with
+our internal operations documentation.
 
 ## Staying current
 
