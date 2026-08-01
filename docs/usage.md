@@ -19,7 +19,7 @@ metadata:
 spec:
   url: https://github.com/medici-finance/canton-k8s
   ref:
-    tag: v0.1.0          # ALWAYS a tag or commit SHA — never a branch
+    tag: v0.1.1          # ALWAYS a tag or commit SHA — never a branch
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -39,6 +39,27 @@ spec:
 **Pin by tag or SHA.** This repo is a public supply-chain source. A branch
 ref means any future commit here flows straight into your cluster on the next
 reconcile. Review changes, then bump the pin deliberately.
+
+**Then watch for updates — pinning is only half of it.** A pin that is never
+bumped is a deployment frozen on the day you adopted it, including any security
+fix published since. Nothing in Flux will tell you: a `GitRepository` pinned to
+a tag reconciles happily forever against that tag.
+
+So pair the pin with a notification path. On this repo:
+
+- **Watch → Custom → Releases** for `medici-finance/canton-k8s`. Every change
+  that consumers should take arrives as a new tag; there is no other channel.
+- **Watch → Custom → Security alerts**, and check
+  the [repository's Security Advisories page](https://github.com/medici-finance/canton-k8s/security/advisories)
+  for any security-related updates.
+- When a new tag lands, diff it against your pin before bumping
+  (`git diff <your-pin>..<new-tag>`). That is the review the pin exists to let
+  you do.
+
+If you cannot commit to watching, pin to a tag anyway and set yourself a
+recurring reminder to check. Tracking `main` to "stay current" trades a known
+review step for an unreviewed one and is the worse option, not the convenient
+one.
 
 **Substitution semantics** (Flux `postBuild`): only variables *defined* in
 `substituteFrom`/`substitute` are replaced; undefined `${VARS}` are left
@@ -69,7 +90,7 @@ values: [`examples/env-config.yaml`](../examples/env-config.yaml).
 |---|---|---|
 | `CANTON_NAMESPACE` | `canton-dev` | Namespace for every Canton/Splice/Keycloak object; also derives all in-cluster service URLs (`postgres.<ns>.svc…`, `keycloak.<ns>.svc…`). |
 | `BASE_DOMAIN` | `dev.example.com` | Wildcard certificate (`*.<BASE_DOMAIN>`). |
-| `KEYCLOAK_HOST` | `keycloak.dev.example.com` | Keycloak ingress host, public issuer URL (`KC_HOSTNAME_URL`), UI-auth issuer URLs. JWKS fetches deliberately do NOT use it — see sharp edge 2. |
+| `KEYCLOAK_HOST` | `keycloak.dev.example.com` | Keycloak ingress host, public issuer URL (`KC_HOSTNAME`), UI-auth issuer URLs. JWKS fetches deliberately do NOT use it — see sharp edge 2. |
 | `CANTON_API_HOST` | `canton.dev.example.com` | Participant JSON API ingress host. |
 | `VALIDATOR_HOST` | `validator.dev.example.com` | Validator API ingress host. |
 | `FRONTEND_URL` | `https://app.dev.example.com` | CORS allow-origin, frontend client redirect URIs / web origins. |
@@ -122,6 +143,13 @@ your choice):
 | `splice-app-sv-ledger-api-auth` | same shape as above | splice-sv-node, splice-scan |
 | `canton-admin-token` | `token` — an admin bearer token for the JSON API | deploy/ Job, admin/ pod (in `${ADMIN_NAMESPACE}`) |
 
+`admin-realm-password` belongs to the realm's `admin` bootstrap user, which
+holds the `realm-management` client role `realm-admin` — full administrative
+rights **over `${KEYCLOAK_REALM}`** (not over Keycloak as a whole; that is the
+separate master-realm account behind `admin-user` / `admin-password`). Treat it
+as a privileged credential, or drop the user in your overlay if you administer
+the realm some other way.
+
 Extend `keycloak-credentials` with one `<client-id>-client-secret` key per
 service client your application adds to the realm (and mirror it into the
 realm-import init container's env + export list — see
@@ -134,7 +162,8 @@ Scalars (hostnames, sizes, versions) belong in the env ConfigMap.
 
 * `examples/overlays/dev` — participant `disableAuth: true` **plus** the
   `ADDITIONAL_CONFIG_JWT_JWKS` re-append, `cluster.fixedTokens: true` for
-  scan/sv/validator, debug-pod RBAC. Pair with `KEYCLOAK_DB_RESET: "enabled"`.
+  scan/sv/validator, Keycloak `start-dev`, debug-pod RBAC. Pair with
+  `KEYCLOAK_DB_RESET: "enabled"`.
 * `examples/overlays/prod` — the base as-is (the base *is* the production
   shape) + a capacity patch example. Pair with `KEYCLOAK_DB_RESET: "disabled"`.
 
@@ -222,7 +251,22 @@ leaks nothing. The split applies to **every server-side JWKS consumer**, not
 just the participant: the sv-app and validator-app `auth.jwksUrl` in this
 base use the same in-cluster HTTP form (and include Keycloak's `/auth`
 relative path — a public URL without it 404s). Only browser-facing issuer
-URLs (UI auth secrets, `KC_HOSTNAME_URL`) use `https://${KEYCLOAK_HOST}`.
+URLs (UI auth secrets, `KC_HOSTNAME`) use `https://${KEYCLOAK_HOST}`.
+
+The Keycloak half of the split is pinned by **`KC_HOSTNAME`**, the
+hostname-**v2** option, set to the full URL `https://${KEYCLOAK_HOST}/auth`.
+Keycloak 25 introduced hostname v2 and **26.0 removed v1**, so on the 26.x
+image this base ships the v1 names (`KC_HOSTNAME_URL`, `KC_HOSTNAME_ADMIN_URL`)
+are no longer options: they are accepted as environment variables and then
+ignored, which reads as pinning while the issuer is in fact still derived from
+the incoming `Host` header. Two v2 details worth keeping straight if you edit
+this: the path in `KC_HOSTNAME` *replaces* the request context path in
+generated URLs rather than being appended to it, so keep it equal to
+`KC_HTTP_RELATIVE_PATH`; and `hostname-backchannel-dynamic` is left at its
+default `false`, meaning backchannel URLs match the frontend ones, so a token
+minted over the in-cluster address still carries the public `iss`. That default
+does not touch the split above — every JWKS consumer here is handed an explicit
+in-cluster `jwksUrl` and none of them use OIDC discovery.
 
 ### 3. Immutable Job specs → versioned Job names
 

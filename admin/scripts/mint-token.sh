@@ -51,6 +51,23 @@ if [ -z "$CANTON_AUDIENCE" ]; then CANTON_AUDIENCE="https://canton.network.globa
 
 cred() { cat "$CREDS_DIR/$1" 2>/dev/null || echo ""; }
 _json_val() { jq -r ".$1 // empty" 2>/dev/null; }
+
+# Secrets must not travel in curl's argv: /proc/<pid>/cmdline is world-readable,
+# so `-d "password=$PW"` exposes the password to every process in the container
+# for the life of the request. curl's `--data-urlencode name@file` reads the
+# value from a file instead and URL-encodes it — which also fixes the separate
+# bug that raw values (and the space in a two-word `scope`) were sent
+# un-encoded into an application/x-www-form-urlencoded body.
+SECRET_DIR=$(mktemp -d)
+chmod 700 "$SECRET_DIR"
+trap 'rm -rf "$SECRET_DIR"' EXIT
+# write_secret <name> <value> — 0600 file, no trailing newline; prints its path.
+# Shell function arguments live in this process's memory, not in any argv.
+write_secret() {
+  _f="$SECRET_DIR/$1"
+  ( umask 077; printf %s "$2" > "$_f" )
+  printf %s "$_f"
+}
 require_kc() {
   if [ -z "$KEYCLOAK_URL" ]; then
     echo "KEYCLOAK_URL not set (public Keycloak base URL incl. relative path)" >&2
@@ -80,10 +97,11 @@ case "$WHAT" in
     AUSER=$(cred admin-user)
     APW=$(cred admin-password)
     if [ -z "$APW" ]; then echo "no admin-password in $CREDS_DIR" >&2; exit 1; fi
+    APW_FILE=$(write_secret admin-password "$APW")
     TOKEN=$(curl -s -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
-      -d 'grant_type=password' -d 'client_id=admin-cli' \
-      -d "username=$AUSER" -d "password=$APW" \
-      -d 'scope=openid' | _json_val access_token)
+      --data-urlencode 'grant_type=password' --data-urlencode 'client_id=admin-cli' \
+      --data-urlencode "username=$AUSER" --data-urlencode "password@$APW_FILE" \
+      --data-urlencode 'scope=openid' | _json_val access_token)
     ;;
 
   user)
@@ -95,10 +113,11 @@ case "$WHAT" in
     UPW=$(printenv KC_USER_PASSWORD || true)
     if [ -z "$UPW" ]; then UPW=$(cred app-user-password); fi
     if [ -z "$UPW" ]; then echo "no user password — set KC_USER_PASSWORD or provide $CREDS_DIR/app-user-password" >&2; exit 1; fi
+    UPW_FILE=$(write_secret user-password "$UPW")
     TOKEN=$(curl -s -X POST "$KEYCLOAK_URL/realms/$KC_REALM/protocol/openid-connect/token" \
-      -d 'grant_type=password' -d "client_id=$KC_FRONTEND_CLIENT_ID" \
-      -d "username=$USERNAME" -d "password=$UPW" \
-      -d 'scope=openid daml_ledger_api' | _json_val access_token)
+      --data-urlencode 'grant_type=password' --data-urlencode "client_id=$KC_FRONTEND_CLIENT_ID" \
+      --data-urlencode "username=$USERNAME" --data-urlencode "password@$UPW_FILE" \
+      --data-urlencode 'scope=openid daml_ledger_api' | _json_val access_token)
     ;;
 
   svc)
@@ -109,10 +128,11 @@ case "$WHAT" in
     SECRET=$(printenv CLIENT_SECRET || true)
     if [ -z "$SECRET" ]; then SECRET=$(cred "$CLIENT_ID-client-secret"); fi
     if [ -z "$SECRET" ]; then echo "no secret — set CLIENT_SECRET or provide $CREDS_DIR/$CLIENT_ID-client-secret" >&2; exit 1; fi
+    SECRET_FILE=$(write_secret client-secret "$SECRET")
     TOKEN=$(curl -s -X POST "$KEYCLOAK_URL/realms/$KC_REALM/protocol/openid-connect/token" \
-      -d 'grant_type=client_credentials' -d "client_id=$CLIENT_ID" \
-      -d "client_secret=$SECRET" \
-      -d 'scope=basic audience_canton_network daml_ledger_api' | _json_val access_token)
+      --data-urlencode 'grant_type=client_credentials' --data-urlencode "client_id=$CLIENT_ID" \
+      --data-urlencode "client_secret@$SECRET_FILE" \
+      --data-urlencode 'scope=basic audience_canton_network daml_ledger_api' | _json_val access_token)
     ;;
 
   *)

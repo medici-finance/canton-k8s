@@ -112,7 +112,29 @@ spec:
               apk add --no-cache gettext > /dev/null 2>&1
               echo "Templating realm.json with Secret values..."
               export APP_USER_VALIDATOR_CLIENT_SECRET APP_USER_SV_CLIENT_SECRET APP_USER_PASSWORD ADMIN_PASSWORD VALIDATOR_APP_BACKEND_CLIENT_SECRET
-              envsubst < /etc/realm/realm.json > /opt/keycloak/data/import/realm.json
+              # Substitute ONLY these five secret placeholders. A bare `envsubst`
+              # replaces every ${...} it finds, and an UNDEFINED variable expands to
+              # the EMPTY STRING — so a client added to the realm without extending
+              # the export/env lists imports with secret "", silently weakening auth
+              # instead of failing. The allow-list leaves anything unexpected intact
+              # so the check below can catch it. ($$ escapes Flux postBuild, matching
+              # the kc-db-init container above.)
+              envsubst '$${APP_USER_VALIDATOR_CLIENT_SECRET} $${APP_USER_SV_CLIENT_SECRET} $${APP_USER_PASSWORD} $${ADMIN_PASSWORD} $${VALIDATOR_APP_BACKEND_CLIENT_SECRET}' \
+                < /etc/realm/realm.json > /opt/keycloak/data/import/realm.json
+              # Fail CLOSED. A surviving placeholder means a value was never supplied:
+              # either a secret missing from this container's env, or a Flux postBuild
+              # variable the consumer's ConfigMap does not define — those land
+              # literally rather than erroring (docs/usage.md, "fails soft"). Importing
+              # such a realm weakens auth quietly, so abort the rollout loudly.
+              # -F (fixed string) is deliberate: as a BASIC regex, '$${' is read as an
+              # interval operator by BSD/GNU grep and matches NOTHING, so the unescaped
+              # form silently never fires — a fail-closed check that always passes.
+              if grep -qF '$${' /opt/keycloak/data/import/realm.json; then
+                echo "ERROR: realm.json still contains unsubstituted placeholders — refusing to import." >&2
+                echo "Supply these via the realm-import env (secrets) or Flux postBuild (everything else):" >&2
+                grep -oE '\$$\{[A-Za-z_][A-Za-z0-9_]*\}' /opt/keycloak/data/import/realm.json | sort -u >&2
+                exit 1
+              fi
               echo "Realm import file ready."
           env:
             - name: APP_USER_VALIDATOR_CLIENT_SECRET
@@ -148,10 +170,24 @@ spec:
       containers:
         - name: keycloak
           image: quay.io/keycloak/keycloak:26.1.0
-          args: ["start-dev", "--import-realm"]
+          # PRODUCTION start mode. This container used to run Keycloak's DEV start
+          # command, which relaxes the production guarantees — HTTP on regardless,
+          # permissive hostname handling, no strict HTTPS, the dev cache/profile —
+          # and this base is what the PROD overlay inherits, so it put a dev-mode
+          # IdP in front of real users. Dev mode now lives ONLY in the dev overlay
+          # (examples/overlays/dev/patch-keycloak-dev-mode.yaml), mirroring how that
+          # overlay carries the participant's disableAuth. Keep prod overlays off it.
+          args: ["start", "--import-realm"]
           ports:
             - containerPort: 8080
           env:
+            # Production mode disables the HTTP listener unless this is set; the
+            # Service and ingress above speak plain HTTP to :8080 because TLS
+            # terminates at the ingress (KC_PROXY_HEADERS=xforwarded below).
+            # Without it `start` aborts at boot demanding key material. Keep the
+            # pod's HTTP port reachable ONLY through the ingress.
+            - name: KC_HTTP_ENABLED
+              value: "true"
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -182,17 +218,41 @@ spec:
                   key: password
             - name: KC_PROXY_HEADERS
               value: xforwarded
-            # The PUBLIC issuer URL. Tokens minted here carry
-            # iss=https://${KEYCLOAK_HOST}/auth/realms/<realm> — this must
-            # match the issuer the participant's IdP config expects, while the
+            # The PUBLIC base URL. Pins every frontend URL the server
+            # generates, so tokens minted here carry
+            # iss=https://${KEYCLOAK_HOST}/auth/realms/<realm> whatever Host
+            # header the request arrived with — that `iss` must match the
+            # issuer the participant's IdP config expects, while the
             # participant fetches the JWKS over in-cluster HTTP (see
             # release-participant.yaml).
-            - name: KC_HOSTNAME_URL
+            #
+            # This is the hostname-v2 model. Keycloak 25 introduced it and
+            # 26.0 REMOVED v1, so under the 26.1 image above the v1 names
+            # (KC_HOSTNAME_URL / KC_HOSTNAME_ADMIN_URL) are not options at all:
+            # they are accepted as env vars and then ignored, which is why the
+            # pinning this base documents has to be expressed as KC_HOSTNAME.
+            # Notes on what is deliberately NOT set here:
+            #   * hostname-admin — only needed when a proxy exposes the admin
+            #     console on a *different* address than KC_HOSTNAME. It is the
+            #     same address here, so KC_HOSTNAME already covers it.
+            #   * hostname-strict — inert once hostname is a full URL ("If
+            #     hostname is specified, hostname-strict is effectively
+            #     ignored"). Under v2 its default is true and `"false"` is the
+            #     switch that re-enables Host-header-derived URLs, i.e. exactly
+            #     what this pinning exists to prevent — so it is gone, not
+            #     carried over.
+            #   * hostname-backchannel-dynamic — the v2 default (false) makes
+            #     backchannel URLs equal the frontend ones, so even a token
+            #     minted over the in-cluster address carries the public `iss`.
+            #     Setting it true would hand in-cluster callers an in-cluster
+            #     issuer no IdP config matches. It does NOT affect the
+            #     issuer/JWKS split: every JWKS consumer in this base is given
+            #     an explicit in-cluster jwksUrl and never uses OIDC discovery.
+            # The URL's path REPLACES the request context path in generated
+            # URLs (it is not appended), so it must match KC_HTTP_RELATIVE_PATH
+            # below — keep both on /auth, or change both together.
+            - name: KC_HOSTNAME
               value: https://${KEYCLOAK_HOST}/auth
-            - name: KC_HOSTNAME_ADMIN_URL
-              value: https://${KEYCLOAK_HOST}/auth
-            - name: KC_HOSTNAME_STRICT
-              value: "false"
             - name: KC_HTTP_RELATIVE_PATH
               value: /auth
             - name: KC_HEALTH_ENABLED
