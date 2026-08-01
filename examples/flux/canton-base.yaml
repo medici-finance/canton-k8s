@@ -19,10 +19,13 @@ spec:
   interval: 1h
   url: https://github.com/medici-finance/canton-k8s
   ref:
-    # Pin by tag…
-    tag: v0.1.1
-    # …or, stricter, by commit:
-    # commit: 0123456789abcdef0123456789abcdef01234567
+    # Pin by commit — the immutable form, and the one to copy. A commit SHA
+    # cannot be re-pointed; `commit` also takes precedence over every other
+    # ref field, so it cannot be quietly widened by an edit elsewhere.
+    commit: 2ede9ac73f9c6881d9d38f5e3b2c9913f67610ca   # = tag v0.1.1
+    # …or by tag, which reads better in review but CAN be moved to a different
+    # commit upstream, and Flux follows it:
+    # tag: v0.1.1
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization

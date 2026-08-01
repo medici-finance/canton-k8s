@@ -1,0 +1,73 @@
+---
+# Kustomize COMPONENT: deliver CORS via ingress-nginx instead of Traefik.
+#
+# WHY THIS EXISTS
+# `INGRESS_CLASS` parametrizes `ingressClassName`, but CORS in this base does
+# NOT follow it: base/canton/traefik-cors.yaml is a `traefik.io/v1alpha1`
+# Middleware activated by a Traefik-only annotation. A non-Traefik adopter who
+# sets INGRESS_CLASS and changes nothing else gets no CORS headers at all and
+# an opaque browser error with nothing in any server log.
+#
+# HOW TO USE IT
+# A component composes with whichever overlay you already run — it is not a
+# third overlay. In YOUR overlay's kustomization.yaml:
+#
+#   resources:
+#     - <path to this repo's base/canton>      # or your dev/prod overlay
+#   components:
+#     - <path to this repo's examples/components/nginx-cors>
+#
+# Requires kustomize >= v4 (components are v1alpha1) and ingress-nginx on the
+# cluster. Set INGRESS_CLASS: "nginx" in your env ConfigMap as well — this
+# component only moves CORS; it does not set the ingress class.
+#
+# OTHER CONTROLLERS
+# Copy this component and swap the annotations for your controller's CORS
+# mechanism (HAProxy: `haproxy.org/cors-*`; a service mesh or API gateway may
+# own CORS entirely, in which case keep only the `$patch: delete` below and add
+# nothing). What must NOT happen is shipping neither mechanism.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  # 1. Drop the Traefik-only Middleware — its CRD does not exist on a
+  #    non-Traefik cluster, so leaving it in makes the whole apply fail.
+  - target:
+      group: traefik.io
+      version: v1alpha1
+      kind: Middleware
+      name: cors-headers
+    patch: |
+      $patch: delete
+      apiVersion: traefik.io/v1alpha1
+      kind: Middleware
+      metadata:
+        name: cors-headers
+
+  # 2. On every ingress: drop the (inert) Traefik middleware annotation and add
+  #    the ingress-nginx CORS annotations. `${FRONTEND_URL}` is the same
+  #    variable base/canton/traefik-cors.yaml uses for its allow-origin list,
+  #    so no new variable is introduced.
+  - target:
+      kind: Ingress
+    patch: |
+      - op: remove
+        path: /metadata/annotations/traefik.ingress.kubernetes.io~1router.middlewares
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1enable-cors
+        value: "true"
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1cors-allow-origin
+        value: "${FRONTEND_URL}"
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1cors-allow-methods
+        value: "GET, POST, PUT, DELETE, OPTIONS"
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1cors-allow-headers
+        value: "Authorization, Content-Type, X-Requested-With"
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1cors-allow-credentials
+        value: "true"
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1cors-max-age
+        value: "3600"

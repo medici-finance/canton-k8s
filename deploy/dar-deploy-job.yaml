@@ -71,6 +71,12 @@ spec:
           image: curlimages/curl:8.11.1
           command: ["sh", "/opt/dar-deploy/wait-for-validator.sh"]
           env:
+            # ${CANTON_NAMESPACE} is a base/canton variable that deploy/ ALSO
+            # needs. Applied without substitution (e.g. `kustomize build deploy
+            # | kubectl apply -f -`, no Flux postBuild) the placeholder survives
+            # into this URL literally; nothing rejects it, the name never
+            # resolves, and the Job dies as DeadlineExceeded with only a DNS
+            # error in the log. See docs/usage.md § "Running deploy/ standalone".
             - name: VALIDATOR_URL
               value: "http://validator-app.${CANTON_NAMESPACE}.svc.cluster.local:5003"
           volumeMounts:
