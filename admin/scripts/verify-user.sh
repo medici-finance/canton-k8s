@@ -57,6 +57,32 @@ b64pad() {
   while [ "$i" -lt "$m" ]; do printf '='; i=$((i+1)); done
 }
 
+# b64url_decode <segment> — decode one JWT segment.
+#
+# JWT segments are base64URL (RFC 7515 §2): where standard base64 spells '+'
+# and '/', base64url spells '-' and '_'. `base64 -d` implements the STANDARD
+# alphabet only — busybox (the reference ADMIN_IMAGE, alpine/k8s) and GNU
+# coreutils both stop at the first '-' or '_' and emit truncated garbage.
+#
+# Whether a given token trips this is a property of the payload BYTES and their
+# alignment — nothing an operator can see by reading the claims. A 6-bit group
+# has to land on value 62 or 63. Printable-ASCII JSON reaches that only when a
+# '>', '?' or '~' sits at a byte offset ≡ 2 (mod 3) — a URL with a query
+# string, say; a UTF-8 byte >= 0x80 from a display name opens the other three
+# positions, but does not guarantee one (`{"sub":"alice-svc","name":"Müller"}`
+# encodes to neither character). So the failure is INTERMITTENT: one token
+# decodes, the next from the same issuer does not. That is the worst possible
+# shape for a diagnostic reached for during an outage — hence translate the
+# alphabet unconditionally rather than on some heuristic.
+#
+# Translate before decoding, and swallow a decode failure: the
+# caller checks for an empty result and prints the script's own diagnostic. An
+# unguarded failure here would abort the whole script under `set -e -o pipefail`
+# with a bare exit status and no message at all.
+b64url_decode() {
+  b64pad "$1" | tr '_-' '/+' | base64 -d 2>/dev/null || true
+}
+
 SUB=""; TOKEN=""; PAYLOAD=""
 if [ $# -eq 0 ]; then
   echo "Usage: verify-user.sh <sub> | verify-user.sh --token <jwt>"
@@ -65,7 +91,7 @@ fi
 if [ "$1" = "--token" ]; then
   TOKEN="$2"
   PAYLOAD=$(echo "$TOKEN" | cut -d. -f2)
-  SUB=$(b64pad "$PAYLOAD" | base64 -d 2>/dev/null | jq -r '.sub // empty' 2>/dev/null)
+  SUB=$(b64url_decode "$PAYLOAD" | jq -r '.sub // empty' 2>/dev/null || true)
   if [ -z "$SUB" ]; then
     fail "Could not decode sub from token"
     exit 1
@@ -110,10 +136,11 @@ if [ -n "$TOKEN" ]; then
   echo "token-based probes:"
 
   echo -n "Token claims?        "
-  ALG=$(b64pad "$(echo "$TOKEN" | cut -d. -f1)" | base64 -d 2>/dev/null | jq -r '.alg // "?"' 2>/dev/null)
-  CLAIMS=$(b64pad "$PAYLOAD" | base64 -d 2>/dev/null)
-  ISS=$(echo "$CLAIMS" | jq -r '.iss // empty' 2>/dev/null)
-  SCOPE=$(echo "$CLAIMS" | jq -r '.scope // empty' 2>/dev/null)
+  ALG=$(b64url_decode "$(echo "$TOKEN" | cut -d. -f1)" | jq -r '.alg // "?"' 2>/dev/null || true)
+  if [ -z "$ALG" ]; then ALG="?"; fi
+  CLAIMS=$(b64url_decode "$PAYLOAD")
+  ISS=$(echo "$CLAIMS" | jq -r '.iss // empty' 2>/dev/null || true)
+  SCOPE=$(echo "$CLAIMS" | jq -r '.scope // empty' 2>/dev/null || true)
   flags=""
   if [ "$ALG" != "RS256" ]; then flags="$flags alg=$ALG"; fi
   if [ -n "$IDP_ISSUER_SUBSTRING" ]; then

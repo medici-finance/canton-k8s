@@ -268,6 +268,10 @@ kubectl exec -n canton-tools-dev deploy/canton-admin -- verify-user.sh --token "
 T=$(kubectl exec -n canton-tools-dev deploy/canton-admin -- mint-token.sh svc oracle-svc)
 ```
 
+`probe-canton.sh` is strictly read-only — it only ever issues GETs, so it is
+safe to run against production. It exits `0` when every line reported `OK` and
+`1` when any line reported `FAIL`, so you can gate on it rather than scrape it.
+
 `mint-token.sh hs256` mints the dev-only static HS256 token (Splice
 `disableAuth` shared key). Use it **only** to confirm the participant is up:
 it masks every RS256-path failure. After any participant restart or upgrade,
