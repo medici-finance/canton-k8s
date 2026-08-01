@@ -1,0 +1,21 @@
+---
+# DEV ONLY — run Keycloak in development mode.
+#
+# The base starts Keycloak with `start` (production mode). `start-dev` relaxes
+# the production guarantees: HTTP is on unconditionally, hostname handling is
+# permissive, strict HTTPS is off and caching is the local dev profile. That is
+# convenient on a throwaway cluster and wrong in front of real users, so it is
+# confined to this overlay — never copy it into a prod overlay.
+#
+# `args` is replaced wholesale (it is a plain list); keep `--import-realm` or the
+# realm ConfigMap stops being imported.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+spec:
+  template:
+    spec:
+      containers:
+        - name: keycloak
+          args: ["start-dev", "--import-realm"]

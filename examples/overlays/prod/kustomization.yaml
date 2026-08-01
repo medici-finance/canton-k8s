@@ -10,8 +10,8 @@
 #       SPLICE_IS_DEV_NET: "false"
 #   * capacity patches like the one below.
 #
-# Intentional dev/prod divergences (disableAuth, fixedTokens, debug RBAC)
-# live only in the dev overlay — never copy them here.
+# Intentional dev/prod divergences (disableAuth, fixedTokens, Keycloak
+# start-dev, debug RBAC) live only in the dev overlay — never copy them here.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
