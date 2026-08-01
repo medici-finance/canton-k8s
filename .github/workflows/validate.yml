@@ -41,8 +41,16 @@ jobs:
             # Cheap approximation: strip ConfigMap documents, then grep.
             # ${KC_INIT_*} is the keycloak Deployment's pod-runtime init-script
             # namespace (deliberately disjoint from the Flux var set) — allowed.
+            # `$${VAR}` is the ESCAPED form: Flux's envsubst consumes one `$` and
+            # emits a literal `${VAR}` for pod runtime, so it is deliberate, not
+            # unresolved. Strip `$$` pairs left-to-right (the same semantics) before
+            # matching, so `$$${VAR}` — one escape plus a real substitution site —
+            # still fails. Then require a variable-shaped name after `${`: no
+            # closing `}` is demanded, so `${VAR:-x}` fails too, while prose such as
+            # `${...}` is correctly not a placeholder. Hits print escape-stripped.
             yq eval 'select(.kind != "ConfigMap")' "/tmp/rendered/$name.sub.yaml" > "/tmp/rendered/$name.noncm.yaml"
-            if grep -n '\${' "/tmp/rendered/$name.noncm.yaml" | grep -v '\${KC_INIT_'; then
+            if sed 's/\$\$//g' "/tmp/rendered/$name.noncm.yaml" \
+                 | grep -nE '\$\{[A-Za-z_]' | grep -v '\${KC_INIT_'; then
               echo "FATAL: unresolved \${...} placeholder outside ConfigMap data in $target"
               exit 1
             fi
