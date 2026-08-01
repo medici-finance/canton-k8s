@@ -22,7 +22,19 @@
 # substitution set is safe.
 set -euo pipefail
 
-apt-get update -qq && apt-get install -y -qq curl unzip > /dev/null 2>&1
+# HARDENING TODO (finding CK13): this Job installs its own dependencies at
+# deploy time, so EVERY deploy needs egress to a Debian mirror and races
+# whatever state that mirror is in — an outage or a moved package turns a
+# routine DAR upload into a failed deploy for reasons unrelated to the DAR.
+# The fix is a base image that already ships curl + unzip; set
+# dar-deploy-job.yaml's image to one and this block becomes a no-op.
+# Until then it is at least conditional: an image that already has the tools is
+# never touched, and an install failure falls through to the explicit checks
+# below so the operator gets a named tool rather than an apt-get traceback.
+if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
+  echo "  installing curl/unzip at deploy time (needs egress to the package mirror)"
+  apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq curl unzip >/dev/null 2>&1 || true
+fi
 command -v curl >/dev/null 2>&1 || { echo "FATAL: curl not installed"; exit 1; }
 command -v unzip >/dev/null 2>&1 || { echo "FATAL: unzip not installed"; exit 1; }
 

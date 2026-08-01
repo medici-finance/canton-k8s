@@ -5,8 +5,8 @@
 # to this public base. The dar-deploy Job (dar-deploy-job.yaml) reassembles
 # the parts in order and uploads the result.
 #
-# WHY parts: a ConfigMap value is capped at ~1MiB; DARs are bigger. Each part
-# holds an equal contiguous slice of the raw DAR bytes.
+# WHY parts: the API server caps a ConfigMap at 1048576 decoded bytes; DARs are
+# bigger. Each part holds an equal contiguous slice (see LIMIT below).
 #
 # REMINDER (Job-name versioning rule): after regenerating, bump BOTH
 # DAR_VERSION and DAR_DEPLOY_JOB_VERSION in your env ConfigMap, or Flux will
@@ -41,14 +41,29 @@ mkdir -p "$OUT_DIR"
 
 SIZE=$(wc -c < "$DAR" | tr -d ' ')
 
-# Each ConfigMap value is capped at ~1MiB (1048576 bytes); leave headroom for
-# metadata. Note the cap applies to the base64-encoded manifest as stored in
-# etcd; raw slices of ~1MB keep the encoded ConfigMap comfortably under the
-# overall object size limit in practice.
-LIMIT=1050000
+# The cap this gate exists to enforce is the API server's, and it is measured on
+# the DECODED bytes — not on the base64 text in the YAML:
+#
+#   ValidateConfigMap()   totalSize += len(value) for each binaryData value
+#   BinaryData            map[string][]byte  (already decoded)
+#   MaxSecretSize         1 * 1024 * 1024 = 1048576
+#   (k8s pkg/apis/core/validation/validation.go, pkg/apis/core/types.go)
+#
+# So a raw chunk of N bytes costs N against 1048576, however long its base64
+# rendering is. LIMIT must therefore sit just BELOW 1048576 — the previous
+# 1050000 sat 1424 bytes ABOVE it, which is the whole defect: a chunk in
+# 1048577..1050000 passed this gate and was then rejected by the API server
+# ("may not exceed 1048576 bytes"), i.e. the fuse was useless in exactly the
+# direction it existed for.
+#
+# 8576 bytes of headroom below the cap covers the ConfigMap's own overhead.
+#
+# Do NOT raise LIMIT to "fit one more part" — raise --parts instead (and wire
+# the extra ConfigMap through dar-deploy-job.yaml + dar-deploy.sh).
+LIMIT=1040000
 CHUNK=$(( (SIZE + PARTS - 1) / PARTS ))
 if [ "$CHUNK" -gt "$LIMIT" ]; then
-  echo "FATAL: DAR is $SIZE bytes; each of $PARTS parts ($CHUNK) exceeds the ~1MiB ConfigMap cap." >&2
+  echo "FATAL: DAR is $SIZE bytes; each of $PARTS parts is $CHUNK bytes, over the $LIMIT-byte per-part budget (the API server's 1048576-byte ConfigMap cap, less headroom)." >&2
   echo "       Re-run with --parts $((PARTS + 1)) AND add the extra ConfigMap volume/mount to dar-deploy-job.yaml" >&2
   echo "       plus the extra 'cat' input in dar-deploy.sh." >&2
   exit 1
