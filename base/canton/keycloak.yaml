@@ -113,12 +113,14 @@ spec:
               echo "Templating realm.json with Secret values..."
               export APP_USER_VALIDATOR_CLIENT_SECRET APP_USER_SV_CLIENT_SECRET APP_USER_PASSWORD ADMIN_PASSWORD VALIDATOR_APP_BACKEND_CLIENT_SECRET
               # Substitute ONLY these five secret placeholders. A bare `envsubst`
-              # replaces every ${...} it finds, and an UNDEFINED variable expands to
-              # the EMPTY STRING — so a client added to the realm without extending
-              # the export/env lists imports with secret "", silently weakening auth
-              # instead of failing. The allow-list leaves anything unexpected intact
-              # so the check below can catch it. ($$ escapes Flux postBuild, matching
-              # the kc-db-init container above.)
+              # replaces every placeholder it finds, and an UNDEFINED variable
+              # expands to the EMPTY STRING — so a client added to the realm without
+              # extending the export/env lists imports with secret "", silently
+              # weakening auth instead of failing. The allow-list leaves anything
+              # unexpected intact so the check below can catch it. ($$ escapes Flux
+              # postBuild, matching the kc-db-init container above. This comment
+              # deliberately spells no unescaped brace placeholder: Flux's
+              # substituter aborts the whole Kustomization on one it cannot parse.)
               envsubst '$${APP_USER_VALIDATOR_CLIENT_SECRET} $${APP_USER_SV_CLIENT_SECRET} $${APP_USER_PASSWORD} $${ADMIN_PASSWORD} $${VALIDATOR_APP_BACKEND_CLIENT_SECRET}' \
                 < /etc/realm/realm.json > /opt/keycloak/data/import/realm.json
               # Fail CLOSED. A surviving placeholder means a value was never supplied:
@@ -126,9 +128,18 @@ spec:
               # variable the consumer's ConfigMap does not define — those land
               # literally rather than erroring (docs/usage.md, "fails soft"). Importing
               # such a realm weakens auth quietly, so abort the rollout loudly.
-              # -F (fixed string) is deliberate: as a BASIC regex, '$${' is read as an
-              # interval operator by BSD/GNU grep and matches NOTHING, so the unescaped
-              # form silently never fires — a fail-closed check that always passes.
+              # -F (fixed string) is deliberate, though not for the reason this
+              # comment used to give. As a BASIC regex '$${' is a plain literal —
+              # an unescaped '{' is an ordinary character in a BRE, the interval
+              # operator being '\{' — and it MATCHES on all three greps this could
+              # run under (busybox 1.37, GNU grep 3.8, BSD grep 2.6). The hazard is
+              # the same three bytes read as an EXTENDED regex, or written escaped:
+              #   grep -qE '$${'   GNU/BSD: no match at all; busybox: bad-regex error
+              #   grep -q  '\$\{'  all three: bad-regex error, which `if grep` reads
+              #                    as "no match" because the exit status is non-zero
+              # Either spelling turns this into a fail-closed check that always
+              # passes. -F takes '$' and '{' out of regex scope altogether, so the
+              # pattern means one thing on every grep, BRE and ERE alike.
               if grep -qF '$${' /opt/keycloak/data/import/realm.json; then
                 echo "ERROR: realm.json still contains unsubstituted placeholders — refusing to import." >&2
                 echo "Supply these via the realm-import env (secrets) or Flux postBuild (everything else):" >&2
