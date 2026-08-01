@@ -158,6 +158,13 @@ jobs:
             # nothing is applied. Prose containing a brace-ellipsis is therefore
             # not a harmless non-placeholder; it is fatal to reconciliation for
             # any consumer that does not patch the offending field away.
+            # Re-derive that with the controller's own build path — NOT
+            # `flux envsubst`, which is a different one:
+            #   flux build kustomization <name> --path ./base/canton \
+            #     --kustomization-file <ks.yaml with postBuild.substitute> --dry-run
+            # On a bad site it exits 1 with "var substitution failed for
+            # '<resource>'" and emits no manifest at all, not even the
+            # resources that substituted cleanly.
             # `${VAR:-x}` is caught here too: Flux
             # would silently apply the default (docs/usage.md sharp edge 4).
             # Delete the well-formed sites; whatever still opens a brace is bad.
