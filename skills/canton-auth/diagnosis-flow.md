@@ -57,16 +57,26 @@ $CONFIG_PARTICIPANT_LOG_COMMAND | grep "auth-services"
 
 If the output shows only `[hs256]` with no JWKS entry, the RS256 validator was never loaded. Skip to fix A. If the output includes a JWKS entry, proceed to step 2.
 
-**Fix A: validator not loaded.** The participant image concatenates `ADDITIONAL_CONFIG_*` environment variables alphabetically. An assignment variable that sorts before an append variable silently overwrites it. Name the JWKS append variable to sort after any assignment variable (e.g. use a `Z`-prefix or namespace it late in the alphabet), and use HOCON append syntax:
+**Fix A: validator not loaded.** The participant image concatenates `ADDITIONAL_CONFIG_*` environment variables alphabetically. An assignment variable that sorts before an append variable silently overwrites it. Name the JWKS append variable to sort after any assignment variable (e.g. use a `Z`-prefix or namespace it late in the alphabet), and make its **value** a HOCON append **on the full config path** — `+=` appends to the list it names, so an append with no path in front of it has nothing to append to:
 
-```hocon
-# Correct: bare object append, sorts after DISABLE_AUTH.
-ADDITIONAL_CONFIG_Z_JWT_JWKS = += {
-  type = jwt-jwks
-  url = $CONFIG_JWKS_URL
-  target-audience = https://canton.network.global
-}
+```yaml
+# The env var NAME sorts after DISABLE_AUTH (Z > D), so this append runs last.
+- name: ADDITIONAL_CONFIG_Z_JWT_JWKS
+  # The env var VALUE is HOCON. `auth-services` is the list being appended to:
+  # canton.participants.<node>.ledger-api.auth-services — substitute your
+  # participant's node name for `participant`.
+  value: |-
+    canton.participants.participant.ledger-api.auth-services += {
+      type = jwt-jwks
+      url = "$CONFIG_JWKS_URL"
+      target-audience = "https://canton.network.global"
+    }
 ```
+
+Two details the example is carrying deliberately:
+
+- `+=` takes a **bare object**. Wrapping it as `+= [ { … } ]` appends a nested list and the participant refuses to start with `Expected type OBJECT. Found LIST`.
+- The `url` value is **quoted**. HOCON starts a comment at `//`, so an unquoted `http://…` is truncated to `http:` and the JWKS fetch silently targets nothing.
 
 **Step 2: validator loaded but JWKS unreachable.** If the validator exists but RS256 still 401s, the JWKS fetch is failing — typically because the participant JVM does not trust the TLS certificate at the JWKS URL.
 
@@ -140,9 +150,12 @@ If the log contains `ujson.Str (data: N)`, a DAML `Int` or `Numeric` field was s
 |---|---|---|
 | `Int` | `"3600"` | `3600` |
 | `Numeric 10` | `"1.5"` | `1.5` |
-| `Time` | `"2026-07-19T00:00:00Z"` | (same format, but note: `Time` is the only primitive that maps to a bare JSON string; `Int` and `Numeric` also become strings despite being numeric in DAML) |
+| `Time` | `"2026-07-19T00:00:00Z"` | Correct as a string |
+| `Text` | `"hello"` | Correct as a string |
+| `Party` | `"alice::1220ab…"` | Correct as a string |
 | `Bool` | `true` / `false` | Correct as bare boolean |
-| `Text` | `"hello"` | Correct as bare string |
+
+The trap is not that string-valued types exist — `Text`, `Party`, `ContractId`, `Date` and `Time` are all string-valued in DAML and unsurprising on the wire. It is that `Int` and `Numeric` are **numeric in DAML and still quoted strings on the wire**, so they are the only two rows above where correct-looking JSON is rejected.
 
 **Fix.** Stringify every `Int` and `Numeric` value before serialization. Identify the offending field from the `data: N` value in the log line.
 
@@ -158,7 +171,7 @@ If the log contains `ujson.Str (data: N)`, a DAML `Int` or `Numeric` field was s
 
 ```bash
 curl -s "$CONFIG_PARTICIPANT_URL/v2/parties" \
-  -H "Authorization: Bearer $TOKEN" | jq '.data.partyDetails[].party'
+  -H "Authorization: Bearer $TOKEN" | jq '.partyDetails[].party'
 ```
 
 Every entry is a full `hint::fingerprint` identity. If the submission used only the hint portion, it will not match any entry.

@@ -1,4 +1,10 @@
 ---
+# CORS NOTE (applies to all three ingresses in this file): the
+# `traefik.ingress.kubernetes.io/router.middlewares` annotation is read ONLY by
+# Traefik. `${INGRESS_CLASS}` does not carry it — on any other controller the
+# annotation is inert and these APIs serve no CORS headers at all. See
+# traefik-cors.yaml and docs/usage.md sharp edge 7 for the non-Traefik swap.
+#
 # Keycloak — ${KEYCLOAK_HOST}
 # TLS is served from the shared wildcard cert (${TLS_SECRET_NAME}, see
 # certificate.yaml). No cert-manager.io/cluster-issuer annotation here —

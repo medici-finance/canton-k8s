@@ -211,8 +211,8 @@ anything.
 
 **The failure.** A command submission that works in every other JSON context —
 a `3600` sent as a bare JSON number for a DAML `Int` field, or a
-`2026-07-19T00:00:00Z` sent for a DAML `Time` field — returns a masked 500
-from the JSON API. The command body looks correct to any human reader and
+`1784419200000` epoch-millis sent for a DAML `Time` field — returns a masked
+500 from the JSON API. The command body looks correct to any human reader and
 validates against any standard JSON Schema. The failure reads like a Canton
 bug.
 
@@ -223,7 +223,14 @@ that does not match JSON conventions:
 |---|---|---|
 | `Int` | `"3600"` (quoted string) | `3600` (bare number) |
 | `Numeric 10` | `"1.5"` (quoted string) | `1.5` (bare number) |
-| `Time` | `"2026-07-19T00:00:00Z"` (string) | Correctly a string, but `Time` is the only DAML primitive that maps to a bare JSON string; the confusion is that `Int` and `Numeric` also become strings |
+| `Time` | `"2026-07-19T00:00:00Z"` (string) | Correctly a string |
+| `Text`, `Party`, `ContractId`, `Date` | strings | Correctly strings |
+
+`Text`, `Party`, `ContractId`, `Date` and `Time` are string-valued in DAML, so
+their string encoding surprises nobody. `Int` and `Numeric` are the outliers:
+they are *numeric* in DAML and still arrive and leave as **quoted** strings.
+That asymmetry — not the existence of string-valued primitives — is the whole
+failure mode.
 
 The JSON API wraps DAML `Int` and `Numeric` values in a `ujson.Str`
 constructor internally. A bare JSON number is rejected at the serialization

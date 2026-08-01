@@ -62,5 +62,11 @@ data:
                                            # hung bring-up => DeadlineExceeded, loud
 
   # ── admin/ (debug pod) — only if you use admin/ ──────────────────────────
-  ADMIN_IMAGE: "alpine/k8s:1.31.1"         # needs bash, curl, jq, kubectl
+  # Pinned by DIGEST, not by tag: a tag is a mutable pointer, and this image
+  # runs with the admin bearer token mounted. `1.31.1` is kept in front of the
+  # digest for readability only — the digest is what is enforced.
+  # Re-resolve after a deliberate bump:
+  #   crane digest alpine/k8s:<tag>
+  ADMIN_IMAGE: "alpine/k8s:1.31.1@sha256:dfe8c7a06c41d0b6e8757da99531f8f302e9a2687fa0155af4c4087df585c9c8"
+                                           # needs bash, curl, jq, kubectl
   KEYCLOAK_PUBLIC_URL: "https://keycloak.dev.example.com/auth"

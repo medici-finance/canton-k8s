@@ -4,6 +4,23 @@
 # Applied to ingress routes via annotation:
 #   traefik.ingress.kubernetes.io/router.middlewares: ${CANTON_NAMESPACE}-cors-headers@kubernetescrd
 # (Traefik middleware references are <namespace>-<name>@kubernetescrd.)
+#
+# ── TRAEFIK-SPECIFIC. NOT COVERED BY ${INGRESS_CLASS}. ────────────────────
+# `INGRESS_CLASS` parametrizes ingress.yaml's `ingressClassName`, but CORS is
+# NOT parametrized with it: this object is a `traefik.io/v1alpha1` CRD and the
+# annotation that activates it is read only by Traefik. Set INGRESS_CLASS to
+# anything else (nginx, HAProxy, an cloud LB controller) and you get:
+#   * this Middleware failing to apply (no traefik.io CRDs on the cluster), and
+#   * three ingresses carrying an annotation their controller ignores, so
+#     NO CORS headers are emitted at all.
+# The symptom is an opaque browser-side CORS error on the frontend's first
+# cross-origin call, with nothing in any server log — the base gives no hint
+# that CORS was Traefik-only.
+# Non-Traefik adopters MUST supply an equivalent for their controller. The
+# ready-made swap is the kustomize component at
+# `examples/components/nginx-cors/` (deletes this Middleware, replaces the
+# annotation with the ingress-nginx CORS annotations); see docs/usage.md
+# sharp edge 7 for the recipe and for other controllers.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:

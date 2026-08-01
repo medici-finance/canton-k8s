@@ -19,7 +19,11 @@ metadata:
 spec:
   url: https://github.com/medici-finance/canton-k8s
   ref:
-    tag: v0.1.1          # ALWAYS a tag or commit SHA — never a branch
+    # Lead with the immutable form: a commit SHA cannot be moved.
+    commit: 2ede9ac73f9c6881d9d38f5e3b2c9913f67610ca   # = tag v0.1.1
+    # `tag: v0.1.1` also works and reads better in review, but a git tag CAN be
+    # re-pointed at a different commit and Flux will follow it. Use a tag only
+    # if you trust this repo's tags not to move; use the SHA otherwise.
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -36,9 +40,13 @@ spec:
         name: canton-env-config      # your per-env values
 ```
 
-**Pin by tag or SHA.** This repo is a public supply-chain source. A branch
-ref means any future commit here flows straight into your cluster on the next
-reconcile. Review changes, then bump the pin deliberately.
+**Pin by SHA, or by tag if you accept the weaker guarantee.** This repo is a
+public supply-chain source. A branch ref means any future commit here flows
+straight into your cluster on the next reconcile. Review changes, then bump the
+pin deliberately. The same rule applies to everything else you pin at an
+adopter boundary: pin container images by digest too, not by tag —
+`ADMIN_IMAGE` in `examples/env-config.yaml` shows the
+`repo:tag@sha256:<digest>` form.
 
 **Then watch for updates — pinning is only half of it.** A pin that is never
 bumped is a deployment frozen on the day you adopted it, including any security
@@ -94,7 +102,7 @@ values: [`examples/env-config.yaml`](../examples/env-config.yaml).
 | `CANTON_API_HOST` | `canton.dev.example.com` | Participant JSON API ingress host. |
 | `VALIDATOR_HOST` | `validator.dev.example.com` | Validator API ingress host. |
 | `FRONTEND_URL` | `https://app.dev.example.com` | CORS allow-origin, frontend client redirect URIs / web origins. |
-| `INGRESS_CLASS` | `traefik` | `ingressClassName` on all ingresses. The CORS middleware object itself is Traefik-specific — replace `traefik-cors.yaml` via overlay for other controllers. |
+| `INGRESS_CLASS` | `traefik` | `ingressClassName` on all ingresses. **Does not carry CORS**: CORS ships as a Traefik-only `Middleware` + annotation, so any other value leaves you with no CORS at all. Non-Traefik adopters must apply the `nginx-cors` component or an equivalent — sharp edge 7. |
 | `TLS_SECRET_NAME` | `dev-wildcard-tls` | Certificate secret + ingress TLS ref. |
 | `CLUSTER_ISSUER` | `letsencrypt-production` | cert-manager ClusterIssuer (needs a DNS-01 solver for the wildcard). |
 | `EXTERNAL_DNS_TARGET` | `ingress.example.com` | `external-dns` target annotation on every ingress. |
@@ -116,6 +124,7 @@ values: [`examples/env-config.yaml`](../examples/env-config.yaml).
 | Variable | Example | Used for |
 |---|---|---|
 | `ADMIN_NAMESPACE` | `canton-tools-dev` | Namespace of the deploy Job (and admin pod). |
+| `CANTON_NAMESPACE` | `canton-dev` | Also consumed **here**, not only by `base/canton`: `dar-deploy-job.yaml` builds the `wait-for-validator` init container's URL as `http://validator-app.${CANTON_NAMESPACE}.svc.cluster.local:5003`. Deploying `deploy/` without it is the failure in "Running `deploy/` standalone" below. |
 | `CANTON_API_URL` | `http://participant.canton-dev.svc.cluster.local:7575` | JSON API the Job talks to (no nested substitution — spell it out). |
 | `DAR_PACKAGE_NAME` | `my-package` | Your DAML package name (`daml.yaml` `name:`); used for the version gate. |
 | `DAR_VERSION` | `0.1.0` | Version the Job expects in the DAR ConfigMaps (fail-closed gate). |
@@ -126,7 +135,7 @@ values: [`examples/env-config.yaml`](../examples/env-config.yaml).
 
 | Variable | Example | Used for |
 |---|---|---|
-| `ADMIN_IMAGE` | `alpine/k8s:1.31.1` | Debug pod image; needs bash, curl, jq, kubectl. |
+| `ADMIN_IMAGE` | `alpine/k8s:1.31.1@sha256:dfe8c7a06c41d0b6e8757da99531f8f302e9a2687fa0155af4c4087df585c9c8` | Debug pod image; needs bash, curl, jq, kubectl. **Pin by digest, not by tag** — a tag is a mutable pointer, so `:1.31.1` alone can be re-pushed and silently change what runs with your admin token mounted. Keep the tag in front of the digest for readability; the digest is what is enforced. |
 | `KEYCLOAK_PUBLIC_URL` | `https://keycloak.dev.example.com/auth` | Public Keycloak base **including** the `/auth` relative path (token minting). |
 
 ## Required secrets
@@ -204,6 +213,49 @@ init-waits too: if the participant/validator never come up, the Job fails
 `DeadlineExceeded` dar-deploy Job is the intended failure mode for a broken
 bring-up — investigate the waits' logs, fix, then bump
 `DAR_DEPLOY_JOB_VERSION` to re-run.
+
+### Running `deploy/` standalone
+
+`deploy/` is a separate kustomize target, so it is tempting to
+`kustomize build deploy | kubectl apply -f -` on its own — without the base,
+and therefore without the Flux `postBuild` substitution the base assumes.
+**The `deploy/` tree still contains `${...}` placeholders**, and Flux is what
+resolves them. Applied unsubstituted, they land in the cluster **literally**:
+nothing rejects a Job whose init container is told to poll
+`http://validator-app.${CANTON_NAMESPACE}.svc.cluster.local:5003`. The name
+does not resolve, `wait-for-validator` retries until the whole-Job
+`activeDeadlineSeconds` expires, and you get a `DeadlineExceeded` Job whose
+logs show a DNS failure and give no hint that the cause was an unsubstituted
+variable.
+
+So if you run `deploy/` standalone, substitute the same way CI does before
+applying:
+
+```bash
+kustomize build deploy > /tmp/deploy.yaml
+./hack/substitute.sh /tmp/deploy.yaml <your-env-config>.yaml > /tmp/deploy.sub.yaml
+
+# fail closed: nothing may still be a placeholder outside ConfigMap scripts
+yq eval 'select(.kind != "ConfigMap")' /tmp/deploy.sub.yaml \
+  | sed 's/\$\$//g' | grep -nE '\$\{[A-Za-z_]' && \
+  { echo "FATAL: unsubstituted placeholder — do not apply"; exit 1; }
+
+kubectl apply -f /tmp/deploy.sub.yaml
+```
+
+The full set `deploy/` consumes is `ADMIN_NAMESPACE`, `CANTON_NAMESPACE`,
+`CANTON_API_URL`, `DAR_PACKAGE_NAME`, `DAR_VERSION`,
+`DAR_DEPLOY_JOB_VERSION`, `DAR_DEPLOY_DEADLINE_SECONDS` — note
+`CANTON_NAMESPACE`, which reads like a base-only variable but is required
+here too. Verify against the tree rather than trusting this list:
+
+```bash
+grep -rhoE '\$\{[A-Za-z_][A-Za-z_0-9]*\}' deploy/ | sort -u
+```
+
+`admin/` has the same property — it consumes `FRONTEND_CLIENT_ID` and
+`KEYCLOAK_REALM` from the base table on top of its own two — so run the same
+`grep` over `admin/` before applying it standalone.
 
 ## Admin pod (admin/)
 
@@ -303,6 +355,43 @@ manual-identity model, probes on the not-yet-serving sequencer public API);
 a deadlock — see the comment in `release-sv.yaml`). Re-check all of these
 when bumping `SPLICE_VERSION`.
 
+### 7. CORS is Traefik-only — `INGRESS_CLASS` does not carry it
+
+`INGRESS_CLASS` parametrizes `ingressClassName` on all three ingresses, which
+makes the base look controller-agnostic. CORS is the exception.
+`base/canton/traefik-cors.yaml` is a `traefik.io/v1alpha1` **Middleware**,
+attached through the Traefik-only annotation
+`traefik.ingress.kubernetes.io/router.middlewares`. Set `INGRESS_CLASS` to
+anything else and you get, with no warning:
+
+* the Middleware failing to apply (the `traefik.io` CRDs are not installed), and
+* three ingresses carrying an annotation their controller ignores — **zero CORS
+  headers**.
+
+The frontend's first cross-origin call to the Canton JSON API, Keycloak or the
+validator then fails browser-side with an opaque CORS error and nothing in any
+server log to explain it.
+
+For ingress-nginx, apply the shipped component instead of hand-editing the
+base. It composes with whichever overlay you already run:
+
+```yaml
+# your overlay's kustomization.yaml
+resources:
+  - <path into the GitRepository>/examples/overlays/dev   # or base/canton
+components:
+  - <path into the GitRepository>/examples/components/nginx-cors
+```
+
+It deletes the Traefik Middleware, strips the inert annotation, and adds the
+`nginx.ingress.kubernetes.io/cors-*` annotations — reusing `${FRONTEND_URL}`,
+so no new variable. Set `INGRESS_CLASS: "nginx"` in your env ConfigMap too; the
+component only moves CORS, it does not set the class.
+
+For any other controller (HAProxy `haproxy.org/cors-*`, a gateway or mesh that
+owns CORS entirely), copy that component and swap the annotations. Shipping
+*neither* mechanism is the one outcome to avoid.
+
 ## Validating locally
 
 ```bash
@@ -310,8 +399,24 @@ when bumping `SPLICE_VERSION`.
 kustomize build base/canton > /tmp/base.yaml            # placeholders intact
 ./hack/substitute.sh /tmp/base.yaml examples/env-config.yaml > /tmp/base.sub.yaml
 kubeconform -strict -ignore-missing-schemas /tmp/base.sub.yaml
-grep -n '\${' /tmp/base.sub.yaml                        # must be empty
+
+# unresolved-placeholder check, same shape as CI's:
+yq eval 'select(.kind != "ConfigMap")' /tmp/base.sub.yaml > /tmp/base.noncm.yaml
+sed 's/\$\$//g' /tmp/base.noncm.yaml \
+  | grep -nE '\$\{[A-Za-z_]' | grep -v '\${KC_INIT_'   # must be empty
 ```
+
+A bare `grep -n '\${' /tmp/base.sub.yaml` is **not** the check and can never
+come back empty — the rendered base legitimately still contains two kinds of
+`${...}`, which is why CI filters exactly these two and you must too:
+
+* the escaped form `$${VAR}` inside ConfigMap-shipped scripts and the realm
+  import — Flux's envsubst eats one `$` and emits a literal `${VAR}` for pod
+  runtime, so it is deliberate, not unresolved (hence stripping `$$` pairs and
+  skipping ConfigMap documents);
+* `${KC_INIT_*}` — the Keycloak init-script's pod-runtime namespace, resolved
+  from the `keycloak-credentials` Secret at pod start and deliberately disjoint
+  from the Flux variable set (sharp edge 4).
 
 `hack/substitute.sh` mimics Flux's semantics with GNU envsubst restricted to
 exactly the variables defined in the env ConfigMap.
