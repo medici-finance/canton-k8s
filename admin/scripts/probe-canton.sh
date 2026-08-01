@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # probe-canton.sh — quick Canton health + state summary.
 #
+# READ-ONLY. This script issues GETs and nothing else: a diagnostic that
+# changes the system it measures is worse than no diagnostic.
+#
+# Exit status: 0 when every line reported OK, 1 when any line reported FAIL —
+# so a caller can gate on it instead of scraping the output.
+#
 # Env (defaults suit the canton-admin pod; override for local use):
 #   CANTON_URL   Canton JSON API v2 base URL            (required)
 #   TOKEN_FILE   file holding an admin bearer token     (default in-pod mount)
@@ -27,30 +33,78 @@ if [ -z "$ADMIN_TOKEN" ]; then
   exit 1
 fi
 
+FAILED=0
+
+# get <path> — GET the endpoint and echo whatever came back. Never aborts:
+# curl exits non-zero when it cannot connect at all, and under
+# `set -e -o pipefail` that killed the probe outright instead of reporting FAIL.
+get() {
+  curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CANTON_URL$1" 2>&1 || true
+}
+
+# json_len <body> <field> — echo the length of the named JSON array, or nothing
+# when the body is not JSON, the field is absent, or it is not an array.
+# `select(type=="array")` matters: on a 401 the body IS valid JSON, just without
+# the field, and a bare `.field | length` answers 0 for null — a plausible-looking
+# count that is really "the request failed".
+# The previous code printed OK unconditionally, so a 502 HTML page from an
+# ingress with no backend reported "packages:  loaded" — or, once jq failed
+# under pipefail, killed the script before it printed anything at all.
+json_len() {
+  local n
+  n=$(printf '%s' "$1" | jq -r ".$2 | select(type==\"array\") | length" 2>/dev/null || true)
+  case "$n" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  printf '%s' "$n"
+}
+
+# snippet <body> — first line of an unreadable body, for the FAIL line.
+snippet() {
+  printf '%s' "$1" | tr -d '\r' | head -n1 | cut -c1-100
+}
+
+# report <label> <body> <field> <suffix>
+report() {
+  local label="$1" body="$2" field="$3" suffix="$4" n
+  n=$(json_len "$body" "$field")
+  if [ -n "$n" ]; then
+    ok "$label: $n$suffix"
+  else
+    bad "$label: no readable $field list — $(snippet "$body")"
+    FAILED=1
+  fi
+}
+
 # ledger-end
-LE=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CANTON_URL/v2/state/ledger-end" 2>&1)
-OFFSET=$(echo "$LE" | jq -r '.offset // empty' 2>/dev/null)
+LE=$(get /v2/state/ledger-end)
+OFFSET=$(printf '%s' "$LE" | jq -r '.offset // empty' 2>/dev/null || true)
 if [ -n "$OFFSET" ]; then
   ok "ledger-end: offset=$OFFSET"
 else
-  CODE=$(echo "$LE" | jq -r '.code // "FAIL"' 2>/dev/null)
+  CODE=$(printf '%s' "$LE" | jq -r '.code // empty' 2>/dev/null || true)
+  if [ -z "$CODE" ]; then CODE="no readable answer — $(snippet "$LE")"; fi
   bad "ledger-end: $CODE"
+  FAILED=1
 fi
 
 # packages
-PKGS=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CANTON_URL/v2/packages" 2>&1)
-PKG_COUNT=$(echo "$PKGS" | jq -r '.packageIds | length' 2>/dev/null)
-ok "packages: $PKG_COUNT loaded"
+report "packages" "$(get /v2/packages)" packageIds " loaded"
 
-# parties (POST — the GET listing has been slow/unreliable on some builds)
-PARTIES=$(curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" -d '{}' "$CANTON_URL/v2/parties" 2>&1)
-P_COUNT=$(echo "$PARTIES" | jq -r '.partyDetails | length' 2>/dev/null)
-ok "parties: $P_COUNT"
+# parties — a READ.
+# /v2/parties answers a POST by ALLOCATING a party, and this probe used to send
+# one (with an empty body). Every health check therefore minted a junk party on
+# the ledger, and the "count" it printed was the field count of the allocation
+# response, not the number of parties. GET is the same read the deploy tooling
+# and the skills/ docs use; if it is slow on your build, raise the timeout —
+# never allocate from a diagnostic.
+report "parties" "$(get /v2/parties)" partyDetails ""
 
 # users
-USERS=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CANTON_URL/v2/users" 2>&1)
-U_COUNT=$(echo "$USERS" | jq -r '.users | length' 2>/dev/null)
-ok "users: $U_COUNT"
+report "users" "$(get /v2/users)" users ""
 
+if [ "$FAILED" -ne 0 ]; then
+  echo "done — WITH FAILURES (see FAIL lines above)."
+  exit 1
+fi
 echo "done."
