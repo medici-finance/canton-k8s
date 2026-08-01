@@ -150,11 +150,15 @@ jobs:
             # site) still reduces to `${VAR}` and is still judged.
             sed 's/\$\$//g' "/tmp/rendered/$name.yaml" > "/tmp/rendered/$name.sites.yaml"
 
-            # (a) SHAPE — whole artifact, ConfigMap data included. Flux's engine
-            # aborts the ENTIRE Kustomization with "unable to parse variable
-            # name" on a `${` that is not a well-formed `${IDENT}`, so prose
-            # containing a brace-ellipsis is not a harmless non-placeholder, it
-            # is fatal to reconciliation. `${VAR:-x}` is caught here too: Flux
+            # (a) SHAPE — whole artifact, ConfigMap data included. On a `${`
+            # that is not a well-formed `${IDENT}`, the engine returns "unable
+            # to parse variable name", and kustomize-controller propagates that
+            # out of its build step (`post build failed for '<gvk>/<name>'`) —
+            # so the failure is Kustomization-wide, not per-resource, and
+            # nothing is applied. Prose containing a brace-ellipsis is therefore
+            # not a harmless non-placeholder; it is fatal to reconciliation for
+            # any consumer that does not patch the offending field away.
+            # `${VAR:-x}` is caught here too: Flux
             # would silently apply the default (docs/usage.md sharp edge 4).
             # Delete the well-formed sites; whatever still opens a brace is bad.
             if sed 's/\${[A-Za-z_][A-Za-z0-9_]*}//g' "/tmp/rendered/$name.sites.yaml" \
