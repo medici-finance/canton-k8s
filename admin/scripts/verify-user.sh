@@ -62,11 +62,20 @@ b64pad() {
 # JWT segments are base64URL (RFC 7515 §2): where standard base64 spells '+'
 # and '/', base64url spells '-' and '_'. `base64 -d` implements the STANDARD
 # alphabet only — busybox (the reference ADMIN_IMAGE, alpine/k8s) and GNU
-# coreutils both stop at the first '-' or '_' and emit truncated garbage. Any
-# token carrying a non-ASCII claim value (a directory display name, say) hits
-# those characters, and this diagnostic then decoded nothing.
+# coreutils both stop at the first '-' or '_' and emit truncated garbage.
 #
-# Translate the alphabet before decoding, and swallow a decode failure: the
+# Whether a given token trips this is a property of the payload BYTES and their
+# alignment — nothing an operator can see by reading the claims. A 6-bit group
+# has to land on value 62 or 63. Printable-ASCII JSON reaches that only when a
+# '>', '?' or '~' sits at a byte offset ≡ 2 (mod 3) — a URL with a query
+# string, say; a UTF-8 byte >= 0x80 from a display name opens the other three
+# positions, but does not guarantee one (`{"sub":"alice-svc","name":"Müller"}`
+# encodes to neither character). So the failure is INTERMITTENT: one token
+# decodes, the next from the same issuer does not. That is the worst possible
+# shape for a diagnostic reached for during an outage — hence translate the
+# alphabet unconditionally rather than on some heuristic.
+#
+# Translate before decoding, and swallow a decode failure: the
 # caller checks for an empty result and prints the script's own diagnostic. An
 # unguarded failure here would abort the whole script under `set -e -o pipefail`
 # with a bare exit status and no message at all.

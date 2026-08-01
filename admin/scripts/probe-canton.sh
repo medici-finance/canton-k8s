@@ -95,9 +95,14 @@ report "packages" "$(get /v2/packages)" packageIds " loaded"
 # /v2/parties answers a POST by ALLOCATING a party, and this probe used to send
 # one (with an empty body). Every health check therefore minted a junk party on
 # the ledger, and the "count" it printed was the field count of the allocation
-# response, not the number of parties. GET is the same read the deploy tooling
-# and the skills/ docs use; if it is slow on your build, raise the timeout —
-# never allocate from a diagnostic.
+# response, not the number of parties. GET is the read the skills/ docs already
+# document, and the only listing endpoint there is — POST is allocate. If it is
+# slow on your build, raise the timeout — never allocate from a diagnostic.
+#
+# GET /v2/parties is paginated (pageSize/pageToken), so on a participant with
+# more parties than the server's default page this count is the first page, not
+# the total. Still a read, and still honest about being a party count — unlike
+# what it replaced.
 report "parties" "$(get /v2/parties)" partyDetails ""
 
 # users
