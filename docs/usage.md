@@ -19,7 +19,7 @@ metadata:
 spec:
   url: https://github.com/medici-finance/canton-k8s
   ref:
-    tag: v0.1.0          # ALWAYS a tag or commit SHA — never a branch
+    tag: v0.1.1          # ALWAYS a tag or commit SHA — never a branch
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -39,6 +39,27 @@ spec:
 **Pin by tag or SHA.** This repo is a public supply-chain source. A branch
 ref means any future commit here flows straight into your cluster on the next
 reconcile. Review changes, then bump the pin deliberately.
+
+**Then watch for updates — pinning is only half of it.** A pin that is never
+bumped is a deployment frozen on the day you adopted it, including any security
+fix published since. Nothing in Flux will tell you: a `GitRepository` pinned to
+a tag reconciles happily forever against that tag.
+
+So pair the pin with a notification path. On this repo:
+
+- **Watch → Custom → Releases** for `medici-finance/canton-k8s`. Every change
+  that consumers should take arrives as a new tag; there is no other channel.
+- **Watch → Custom → Security alerts**, and check
+  the [repository's Security Advisories page](https://github.com/medici-finance/canton-k8s/security/advisories)
+  for any security-related updates.
+- When a new tag lands, diff it against your pin before bumping
+  (`git diff <your-pin>..<new-tag>`). That is the review the pin exists to let
+  you do.
+
+If you cannot commit to watching, pin to a tag anyway and set yourself a
+recurring reminder to check. Tracking `main` to "stay current" trades a known
+review step for an unreviewed one and is the worse option, not the convenient
+one.
 
 **Substitution semantics** (Flux `postBuild`): only variables *defined* in
 `substituteFrom`/`substitute` are replaced; undefined `${VARS}` are left
