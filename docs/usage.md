@@ -49,10 +49,9 @@ So pair the pin with a notification path. On this repo:
 
 - **Watch → Custom → Releases** for `medici-finance/canton-k8s`. Every change
   that consumers should take arrives as a new tag; there is no other channel.
-- **Watch → Custom → Security alerts**, and read
-  [the repository's published advisories](https://github.com/medici-finance/canton-k8s/security/advisories).
-  Security fixes are published as GitHub Security Advisories on this repo *and*
-  shipped in a tag — the advisory names the fixed version.
+- **Watch → Custom → Security alerts**, and check
+  the [repository's Security Advisories page](https://github.com/medici-finance/canton-k8s/security/advisories)
+  for any security-related updates.
 - When a new tag lands, diff it against your pin before bumping
   (`git diff <your-pin>..<new-tag>`). That is the review the pin exists to let
   you do.
