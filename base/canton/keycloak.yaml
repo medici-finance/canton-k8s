@@ -204,17 +204,41 @@ spec:
                   key: password
             - name: KC_PROXY_HEADERS
               value: xforwarded
-            # The PUBLIC issuer URL. Tokens minted here carry
-            # iss=https://${KEYCLOAK_HOST}/auth/realms/<realm> — this must
-            # match the issuer the participant's IdP config expects, while the
+            # The PUBLIC base URL. Pins every frontend URL the server
+            # generates, so tokens minted here carry
+            # iss=https://${KEYCLOAK_HOST}/auth/realms/<realm> whatever Host
+            # header the request arrived with — that `iss` must match the
+            # issuer the participant's IdP config expects, while the
             # participant fetches the JWKS over in-cluster HTTP (see
             # release-participant.yaml).
-            - name: KC_HOSTNAME_URL
+            #
+            # This is the hostname-v2 model. Keycloak 25 introduced it and
+            # 26.0 REMOVED v1, so under the 26.1 image above the v1 names
+            # (KC_HOSTNAME_URL / KC_HOSTNAME_ADMIN_URL) are not options at all:
+            # they are accepted as env vars and then ignored, which is why the
+            # pinning this base documents has to be expressed as KC_HOSTNAME.
+            # Notes on what is deliberately NOT set here:
+            #   * hostname-admin — only needed when a proxy exposes the admin
+            #     console on a *different* address than KC_HOSTNAME. It is the
+            #     same address here, so KC_HOSTNAME already covers it.
+            #   * hostname-strict — inert once hostname is a full URL ("If
+            #     hostname is specified, hostname-strict is effectively
+            #     ignored"). Under v2 its default is true and `"false"` is the
+            #     switch that re-enables Host-header-derived URLs, i.e. exactly
+            #     what this pinning exists to prevent — so it is gone, not
+            #     carried over.
+            #   * hostname-backchannel-dynamic — the v2 default (false) makes
+            #     backchannel URLs equal the frontend ones, so even a token
+            #     minted over the in-cluster address carries the public `iss`.
+            #     Setting it true would hand in-cluster callers an in-cluster
+            #     issuer no IdP config matches. It does NOT affect the
+            #     issuer/JWKS split: every JWKS consumer in this base is given
+            #     an explicit in-cluster jwksUrl and never uses OIDC discovery.
+            # The URL's path REPLACES the request context path in generated
+            # URLs (it is not appended), so it must match KC_HTTP_RELATIVE_PATH
+            # below — keep both on /auth, or change both together.
+            - name: KC_HOSTNAME
               value: https://${KEYCLOAK_HOST}/auth
-            - name: KC_HOSTNAME_ADMIN_URL
-              value: https://${KEYCLOAK_HOST}/auth
-            - name: KC_HOSTNAME_STRICT
-              value: "false"
             - name: KC_HTTP_RELATIVE_PATH
               value: /auth
             - name: KC_HEALTH_ENABLED

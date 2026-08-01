@@ -90,7 +90,7 @@ values: [`examples/env-config.yaml`](../examples/env-config.yaml).
 |---|---|---|
 | `CANTON_NAMESPACE` | `canton-dev` | Namespace for every Canton/Splice/Keycloak object; also derives all in-cluster service URLs (`postgres.<ns>.svc…`, `keycloak.<ns>.svc…`). |
 | `BASE_DOMAIN` | `dev.example.com` | Wildcard certificate (`*.<BASE_DOMAIN>`). |
-| `KEYCLOAK_HOST` | `keycloak.dev.example.com` | Keycloak ingress host, public issuer URL (`KC_HOSTNAME_URL`), UI-auth issuer URLs. JWKS fetches deliberately do NOT use it — see sharp edge 2. |
+| `KEYCLOAK_HOST` | `keycloak.dev.example.com` | Keycloak ingress host, public issuer URL (`KC_HOSTNAME`), UI-auth issuer URLs. JWKS fetches deliberately do NOT use it — see sharp edge 2. |
 | `CANTON_API_HOST` | `canton.dev.example.com` | Participant JSON API ingress host. |
 | `VALIDATOR_HOST` | `validator.dev.example.com` | Validator API ingress host. |
 | `FRONTEND_URL` | `https://app.dev.example.com` | CORS allow-origin, frontend client redirect URIs / web origins. |
@@ -243,7 +243,22 @@ leaks nothing. The split applies to **every server-side JWKS consumer**, not
 just the participant: the sv-app and validator-app `auth.jwksUrl` in this
 base use the same in-cluster HTTP form (and include Keycloak's `/auth`
 relative path — a public URL without it 404s). Only browser-facing issuer
-URLs (UI auth secrets, `KC_HOSTNAME_URL`) use `https://${KEYCLOAK_HOST}`.
+URLs (UI auth secrets, `KC_HOSTNAME`) use `https://${KEYCLOAK_HOST}`.
+
+The Keycloak half of the split is pinned by **`KC_HOSTNAME`**, the
+hostname-**v2** option, set to the full URL `https://${KEYCLOAK_HOST}/auth`.
+Keycloak 25 introduced hostname v2 and **26.0 removed v1**, so on the 26.x
+image this base ships the v1 names (`KC_HOSTNAME_URL`, `KC_HOSTNAME_ADMIN_URL`)
+are no longer options: they are accepted as environment variables and then
+ignored, which reads as pinning while the issuer is in fact still derived from
+the incoming `Host` header. Two v2 details worth keeping straight if you edit
+this: the path in `KC_HOSTNAME` *replaces* the request context path in
+generated URLs rather than being appended to it, so keep it equal to
+`KC_HTTP_RELATIVE_PATH`; and `hostname-backchannel-dynamic` is left at its
+default `false`, meaning backchannel URLs match the frontend ones, so a token
+minted over the in-cluster address still carries the public `iss`. That default
+does not touch the split above — every JWKS consumer here is handed an explicit
+in-cluster `jwksUrl` and none of them use OIDC discovery.
 
 ### 3. Immutable Job specs → versioned Job names
 
