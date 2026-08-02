@@ -404,23 +404,30 @@ kustomize build base/canton > /tmp/base.yaml            # placeholders intact
 ./hack/substitute.sh /tmp/base.yaml examples/env-config.yaml > /tmp/base.sub.yaml
 kubeconform -strict -ignore-missing-schemas /tmp/base.sub.yaml
 
-# unresolved-placeholder check, same shape as CI's:
-yq eval 'select(.kind != "ConfigMap")' /tmp/base.sub.yaml > /tmp/base.noncm.yaml
-sed 's/\$\$//g' /tmp/base.noncm.yaml \
-  | grep -nE '\$\{[A-Za-z_]' | grep -v '\${KC_INIT_'   # must be empty
+# unresolved-placeholder check, same shape as CI's: run against base.yaml,
+# the PRE-substitution artifact — `$$` is still a literal two-character
+# escape there. By the time base.sub.yaml exists, substitute.sh has already
+# collapsed every `$$` into `$`, so stripping `$$` against base.sub.yaml
+# removes nothing and false-flags every pod-runtime placeholder below.
+sed 's/\$\$//g' /tmp/base.yaml \
+  | yq eval 'select(.kind != "ConfigMap")' \
+  | grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' | tr -d '${}' | sort -u \
+  > /tmp/used.txt
+yq eval '.data | keys | .[]' examples/env-config.yaml | sort -u > /tmp/env-keys.txt
+comm -23 /tmp/used.txt /tmp/env-keys.txt   # must be empty
 ```
 
 A bare `grep -n '\${' /tmp/base.sub.yaml` is **not** the check and can never
-come back empty — the rendered base legitimately still contains two kinds of
-`${...}`, which is why CI filters exactly these two and you must too:
-
-* the escaped form `$${VAR}` inside ConfigMap-shipped scripts and the realm
-  import — Flux's envsubst eats one `$` and emits a literal `${VAR}` for pod
-  runtime, so it is deliberate, not unresolved (hence stripping `$$` pairs and
-  skipping ConfigMap documents);
-* `${KC_INIT_*}` — the Keycloak init-script's pod-runtime namespace, resolved
-  from the `keycloak-credentials` Secret at pod start and deliberately disjoint
-  from the Flux variable set (sharp edge 4).
+come back empty — the rendered base legitimately still contains `${...}`
+sites Flux never touches, all guarded by the same `$$` escape: ConfigMap-
+shipped scripts, the Keycloak Deployment's `KC_INIT_*` DB-init vars, and the
+realm-import init container's `APP_USER_*`/`ADMIN_PASSWORD`/
+`VALIDATOR_APP_BACKEND_CLIENT_SECRET` secrets (sharp edge 4) — all resolved
+at pod start, not at Flux apply, so none of them are examples-env-config
+keys. `$$` survives intact only in the pre-substitution artifact; running
+the check there and stripping `$$` pairs takes every one of those forms out
+of consideration in a single step, with no per-prefix exclusion list to grow
+or fall out of sync as new pod-runtime secrets are added.
 
 `hack/substitute.sh` mimics Flux's semantics with GNU envsubst restricted to
 exactly the variables defined in the env ConfigMap.
