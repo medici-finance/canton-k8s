@@ -87,6 +87,26 @@ copy while keeping `resources: [<relative path into the GitRepository>]`. In
 practice most consumers point `path:` at one of the shipped overlays and put
 every env difference into the ConfigMap.
 
+
+## CORS configuration
+The base ships CORS via a Traefik-specific Middleware (`base/canton/traefik-cors.yaml`).
+If you are NOT using Traefik as your ingress controller, you must supply an equivalent
+CORS mechanism for your controller (e.g. nginx annotations, or a gateway-level CORS policy).
+The ingress class is parametrized (`INGRESS_CLASS`) but the CORS middleware is not —
+setting `INGRESS_CLASS=nginx` without adding nginx CORS will result in browser cross-origin failures.
+
+
+### Deploy standalone (without Flux)
+The `deploy/` tree uses `${CANTON_NAMESPACE}` to build in-cluster service URLs.
+If you run `deploy/` standalone (without Flux postBuild substitution), you must
+substitute these variables yourself before applying. An unsubstituted `${CANTON_NAMESPACE}`
+in a service URL produces a DNS failure (`DeadlineExceeded`) with no hint at the cause.
+
+```bash
+# Substitute Flux variables before applying standalone
+sed -i "s/\${CANTON_NAMESPACE}/$CANTON_NAMESPACE/g" deploy/dar-deploy-job.yaml
+```
+
 ## Variables reference
 
 All variables are consumed via Flux `postBuild.substituteFrom`. Example
