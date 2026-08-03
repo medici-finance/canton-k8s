@@ -1,3 +1,4 @@
+# TODO(CK13): apt-get at deploy time requires egress to package mirrors — prefer pre-built image with curl+unzip
 #!/usr/bin/env bash
 # dar-deploy.sh — upload a DAR to a Canton participant (JSON API v2) and
 # verify the result on-ledger. Generic: knows nothing about your templates.

@@ -60,7 +60,7 @@ SIZE=$(wc -c < "$DAR" | tr -d ' ')
 #
 # Do NOT raise LIMIT to "fit one more part" — raise --parts instead (and wire
 # the extra ConfigMap through dar-deploy-job.yaml + dar-deploy.sh).
-LIMIT=1040000
+LIMIT=750000  # raw chunk cap: base64-encoded stays under 1MiB ConfigMap limit
 CHUNK=$(( (SIZE + PARTS - 1) / PARTS ))
 if [ "$CHUNK" -gt "$LIMIT" ]; then
   echo "FATAL: DAR is $SIZE bytes; each of $PARTS parts is $CHUNK bytes, over the $LIMIT-byte per-part budget (the API server's 1048576-byte ConfigMap cap, less headroom)." >&2
