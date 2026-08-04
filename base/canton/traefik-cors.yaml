@@ -1,3 +1,9 @@
+# CORS middleware — Traefik-specific.
+# This Middleware CRD is Traefik-only. If you use a non-Traefik ingress controller
+# (nginx, etc.), replace this with an equivalent CORS mechanism for your controller.
+# The ingressClassName is parametrized (${INGRESS_CLASS}) but CORS is not —
+# a non-Traefik adopter who sets INGRESS_CLASS accordingly gets NO CORS
+# and will see opaque browser cross-origin failures.
 ---
 # Traefik CORS middleware — allows the frontend origin to call the Canton
 # JSON API, Keycloak, and Validator APIs cross-origin.
