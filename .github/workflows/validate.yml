@@ -14,8 +14,14 @@ permissions:
   contents: read
 
 jobs:
+  # runs-on: medici-builder — STAGED, NOT YET LIVE. See this PR's description
+  # for two separate blockers before this can ever merge: (1) the org-wide
+  # self-hosted-runner migration this PR is part of, and (2) a PUBLIC-REPO
+  # security question specific to THIS workflow (this repo, unlike the other
+  # three in the same migration batch, is public and this job triggers on
+  # unrestricted `pull_request` — see "SECURITY" below).
   validate:
-    runs-on: ubuntu-latest
+    runs-on: medici-builder
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -82,7 +88,20 @@ jobs:
             "$SHELLCHECK_SHA256" J "shellcheck-${SHELLCHECK_VERSION}/shellcheck"
 
           echo "$BINDIR" >> "$GITHUB_PATH"
-          # yq + envsubst are preinstalled on ubuntu-latest; assert anyway
+          # yq + envsubst are preinstalled on ubuntu-latest; assert anyway.
+          #
+          # DOUBT (medici-builder migration): unlike the three tools pinned
+          # and downloaded above, yq and envsubst are NOT — this assumes the
+          # runner image already has them. That is
+          # unverified for medici-builder. jojig-dao/daml-option-index-tracker's
+          # build-frontend.yml deliberately built an awk-based fallback path
+          # specifically because yq is not guaranteed present on medici-builder
+          # (env var FLEET_HEALTH_TEST_NO_YQ selects it) — the clearest signal
+          # in this org that yq availability on self-hosted is NOT a safe
+          # assumption. envsubst (GNU gettext) has no equivalent evidence either
+          # way. If this assert fails on medici-builder, pin+download yq the
+          # same way kustomize/kubeconform/shellcheck are above, or install
+          # gettext, rather than assuming the image will grow either package.
           yq --version && envsubst --version | head -1
 
       - name: Lint shell scripts (bash -n + shellcheck)
