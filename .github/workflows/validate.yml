@@ -55,6 +55,29 @@ jobs:
           STAGE="$TOOLROOT/stage"
           mkdir -p "$BINDIR" "$STAGE"
 
+          # The bare runner image ships tar + gzip but NOT xz, zstd or ar, yet
+          # the pinned linter asset is xz-compressed and GNU envsubst is only
+          # available as a .deb (an `ar` archive of an xz-compressed tarball),
+          # so neither can be unpacked with base tools. Rather than fork the
+          # runner image for two decompressors, pin one static busybox —
+          # checksum-verified exactly like every other download here — and use
+          # only its clean-room `unxz`/`ar` applets, purely to unpack archives
+          # whose SHA-256 has already been verified. busybox decompresses; it is
+          # never used to run anything untrusted, and (unlike liblzma-based xz)
+          # its unxz shares no code with upstream xz. It stays in the staging
+          # dir, never on PATH.
+          BUSYBOX_SHA256=6e123e7f3202a8c1e9b1f94d8941580a25135382b99e8d3e34fb858bba311348
+          curl -sSfL -o "$STAGE/busybox" \
+            "https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox"
+          actual=$(sha256sum "$STAGE/busybox" | awk '{print $1}')
+          if [ "$actual" != "$BUSYBOX_SHA256" ]; then
+            echo "::error::busybox checksum mismatch: expected $BUSYBOX_SHA256, got $actual"
+            exit 1
+          fi
+          chmod +x "$STAGE/busybox"
+          BUSYBOX="$STAGE/busybox"
+          echo "busybox $BUSYBOX_SHA256 verified"
+
           # install_pinned <bin-name> <url> <sha256> <tar-flag> <member-path>
           install_pinned() {
             name="$1"; url="$2"; expected="$3"; tarflag="$4"; member="$5"
@@ -67,8 +90,14 @@ jobs:
               exit 1
             fi
             # Verified: only now may it be unpacked, made executable, or placed
-            # on PATH.
-            tar "-x${tarflag}f" "$archive" -C "$STAGE" "$member"
+            # on PATH. `z` (gzip) is in the base image; `J` (xz) is not, so xz
+            # archives are decompressed with the pinned busybox and piped into
+            # base tar.
+            if [ "$tarflag" = "J" ]; then
+              "$BUSYBOX" unxz -c "$archive" | tar -xf - -C "$STAGE" "$member"
+            else
+              tar "-x${tarflag}f" "$archive" -C "$STAGE" "$member"
+            fi
             chmod +x "$STAGE/$member"
             mv "$STAGE/$member" "$BINDIR/$name"
             rm -f "$archive"
@@ -108,14 +137,15 @@ jobs:
           # envsubst (not a reimplementation: fluxcd/pkg/envsubst and
           # a8m/envsubst both diverge from GNU semantics in ways this repo's
           # own self-test pins against), so the binary must be actual GNU
-          # gettext, not a substitute. Extracted from Ubuntu 24.04 "noble"'s
-          # own gettext-base_0.21-14ubuntu2_amd64.deb (matches this runner
-          # image's base OS exactly), checksum-verified before unpacking, same
-          # as every other tool in this step. `ar`/`tar` (with zstd support)
-          # are standard on Ubuntu 24.04 and used only to unpack a
-          # already-hash-verified archive — nothing unverified is executed.
-          GETTEXT_DEB_URL="http://archive.ubuntu.com/ubuntu/pool/main/g/gettext/gettext-base_0.21-14ubuntu2_amd64.deb"
-          GETTEXT_DEB_SHA256=3e2806e94aba780cac11961ede06bffd14d4b840c4085be33d597ec93773fba5
+          # gettext, not a substitute. Extracted from the gettext-base_0.21-12
+          # .deb — real GNU gettext-runtime 0.21 — built against an older glibc
+          # than the runner's, so it runs there unchanged. The .deb is an `ar`
+          # archive of an xz-compressed data tarball; both `ar` and `xz` are
+          # absent from the image, so it is cracked with the pinned busybox and
+          # piped into base tar, checksum-verified before unpacking, same as
+          # every other tool in this step — nothing unverified is executed.
+          GETTEXT_DEB_URL="http://deb.debian.org/debian/pool/main/g/gettext/gettext-base_0.21-12_amd64.deb"
+          GETTEXT_DEB_SHA256=5cb39c7acc7125e677ec98d0426a987daf0ce062f749f2a9421b2511f6dd5ab7
           curl -sSfL -o "$STAGE/gettext-base.deb" "$GETTEXT_DEB_URL"
           actual=$(sha256sum "$STAGE/gettext-base.deb" | awk '{print $1}')
           if [ "$actual" != "$GETTEXT_DEB_SHA256" ]; then
@@ -123,8 +153,8 @@ jobs:
             exit 1
           fi
           mkdir -p "$STAGE/deb"
-          (cd "$STAGE/deb" && ar x "$STAGE/gettext-base.deb")
-          tar -xf "$STAGE/deb/data.tar."* -C "$STAGE/deb" ./usr/bin/envsubst
+          (cd "$STAGE/deb" && "$BUSYBOX" ar x "$STAGE/gettext-base.deb")
+          "$BUSYBOX" unxz -c "$STAGE/deb/data.tar.xz" | tar -xf - -C "$STAGE/deb" ./usr/bin/envsubst
           chmod +x "$STAGE/deb/usr/bin/envsubst"
           mv "$STAGE/deb/usr/bin/envsubst" "$BINDIR/envsubst"
           echo "envsubst $GETTEXT_DEB_SHA256 verified"
